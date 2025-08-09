@@ -79,7 +79,7 @@ jobs:
     - name: Start Build
       run: |
         cd openwrt
-        make -j1 V=s
+        make -j4 V=s
 
     - name: Package Firmware
       run: |
