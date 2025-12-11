@@ -87,7 +87,7 @@ jobs:
     - name: Start Build
       run: |
         cd openwrt
-        make -j$(nproc) V=s
+        make -j1 V=s
 
     - name: Package Firmware
       run: |
@@ -118,12 +118,12 @@ jobs:
         name: "RAX3000M ImmortalWrt-24.10基础版固件 - ${{ steps.tag.outputs.tag }}"
         body: |
           📦 此为 RAX3000M 基于 Padavanonly/ImmortalWrt-mt798x-24.10源的编译固件。
-          ✅ 包含 Passwall、OpenClash、网络共享、FTP、iStore、定时重启 等常用插件。
+          ✅ 包含 Passwall、网络共享、FTP、定时重启 等常用插件。
           🔧 支持硬件加速、NTFS/exFAT。
           🕒 自动构建时间：${{ steps.tag.outputs.tag }}
         files: |
           firmware-out/*.bin
-          firmware-out/*.img.gz
+          firmware-out/*.manifest
           firmware-out/*.itb
           firmware-out/sha256sums
         generate_release_notes: true
