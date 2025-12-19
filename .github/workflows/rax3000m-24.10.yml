@@ -16,28 +16,41 @@ jobs:
     - name: Checkout Workflow Repo
       uses: actions/checkout@v4
 
-    - name: 清理磁盘空间 (Maximize Build Space)
+    - name: 清理磁盘空间并重新挂载大分区 (Maximize Build Space)
       uses: easimon/maximize-build-space@master
       with:
-        root-reserve-mb: 2048
+        # 核心设置：将 GitHub Actions 的工作区挂载到那个 100G 的分区
+        build-mount-path: /home/runner/work
+        # 预留根目录 5GB，其余全部给工作区
+        root-reserve-mb: 5120
+        # 这里设置为 0，因为我们在下一步手动创建更大的虚拟内存以防 OOM
         swap-size-mb: 1
         remove-dotnet: 'true'
         remove-android: 'true'
         remove-haskell: 'true'
         remove-codeql: 'true'
         remove-docker-images: 'true'
-    
-    - name: Enable Swap
+
+    - name: 配置虚拟内存 (Enable 4GB Swap)
       run: |
-        # 检查是否已存在 swapfile
-        if [ ! -f /swapfile ]; then
-          sudo fallocate -l 4G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=4096
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-        fi
-        sudo swapon /swapfile || true
-        echo "Swap status:"
+        # 在拥有 100G 空间的工作目录下创建 swapfile
+        # 这样不会占用本来就紧张的根目录 (/) 空间
+        SWAPFILE="${{ github.workspace }}/swapfile"
+        sudo fallocate -l 4G $SWAPFILE || sudo dd if=/dev/zero of=$SWAPFILE bs=1M count=4096
+        sudo chmod 600 $SWAPFILE
+        sudo mkswap $SWAPFILE
+        sudo swapon $SWAPFILE
+        echo "--- 内存与磁盘状态 ---"
         free -h
+        df -h
+
+    - name: 深度清理系统残留
+      run: |
+        # 进一步删除一些不常用的大型软件包，确保根目录有足够缓冲空间
+        sudo rm -rf /usr/local/share/powershell /usr/share/swift /usr/local/lib/node_modules /cache
+        sudo apt-get clean
+        # 显示当前磁盘挂载情况，确认 /home/runner/work 拥有 100G
+        df -hT
 
     - name: Install Dependencies
       run: |
@@ -117,10 +130,7 @@ jobs:
           🔧 支持硬件加速、NTFS/exFAT。
           🕒 自动构建时间：${{ steps.tag.outputs.tag }}
         files: |
-          firmware-out/*.bin
-          firmware-out/*.manifest
-          firmware-out/*.itb
-          firmware-out/sha256sums
+          firmware-out/*
         generate_release_notes: true
         draft: false
         prerelease: false
