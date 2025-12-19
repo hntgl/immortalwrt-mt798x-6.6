@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-  #schedule:
-    #- cron: '0 22 * * 0'
   workflow_dispatch:
 
 jobs:
@@ -19,11 +17,9 @@ jobs:
     - name: 清理磁盘空间并重新挂载大分区 (Maximize Build Space)
       uses: easimon/maximize-build-space@master
       with:
-        # 核心设置：将 GitHub Actions 的工作区挂载到那个 100G 的分区
-        build-mount-path: /home/runner/work
-        # 预留根目录 5GB，其余全部给工作区
+        # 修正：挂载到工作空间的子目录，避免覆盖 GitHub Actions 自身的插件目录(_actions)
+        build-mount-path: /home/runner/work/openwrt_build
         root-reserve-mb: 5120
-        # 这里设置为 0，因为我们在下一步手动创建更大的虚拟内存以防 OOM
         swap-size-mb: 1
         remove-dotnet: 'true'
         remove-android: 'true'
@@ -33,24 +29,18 @@ jobs:
 
     - name: 配置虚拟内存 (Enable 4GB Swap)
       run: |
-        # 在拥有 100G 空间的工作目录下创建 swapfile
-        # 这样不会占用本来就紧张的根目录 (/) 空间
-        SWAPFILE="${{ github.workspace }}/swapfile"
-        sudo fallocate -l 4G $SWAPFILE || sudo dd if=/dev/zero of=$SWAPFILE bs=1M count=4096
-        sudo chmod 600 $SWAPFILE
-        sudo mkswap $SWAPFILE
-        sudo swapon $SWAPFILE
-        echo "--- 内存与磁盘状态 ---"
+        # 使用新挂载的大容量目录创建 swap
+        SWAP_DIR="/home/runner/work/openwrt_build"
+        sudo fallocate -l 4G $SWAP_DIR/swapfile || sudo dd if=/dev/zero of=$SWAP_DIR/swapfile bs=1M count=4096
+        sudo chmod 600 $SWAP_DIR/swapfile
+        sudo mkswap $SWAP_DIR/swapfile
+        sudo swapon $SWAP_DIR/swapfile
         free -h
-        df -h
 
     - name: 深度清理系统残留
       run: |
-        # 进一步删除一些不常用的大型软件包，确保根目录有足够缓冲空间
         sudo rm -rf /usr/local/share/powershell /usr/share/swift /usr/local/lib/node_modules /cache
         sudo apt-get clean
-        # 显示当前磁盘挂载情况，确认 /home/runner/work 拥有 100G
-        df -hT
 
     - name: Install Dependencies
       run: |
@@ -66,54 +56,49 @@ jobs:
 
     - name: Clone ImmortalWrt Source
       run: |
+        # 进入 100G 的大容量挂载目录进行编译
+        cd /home/runner/work/openwrt_build
         git clone -b 2410 --single-branch --filter=blob:none https://github.com/padavanonly/immortalwrt-mt798x-24.10 openwrt
         cd openwrt
         ./scripts/feeds update -a
         ./scripts/feeds install -a
-        # 移除 openwrt feeds 自带的核心库
+        # 移除冲突包
         rm -rf feeds/packages/net/{xray-core,v2ray-geodata,sing-box,chinadns-ng,dns2socks,hysteria,ipt2socks,microsocks,naiveproxy,shadowsocks-libev,shadowsocks-rust,shadowsocksr-libev,simple-obfs,tcping,trojan-plus,tuic-client,v2ray-plugin,xray-plugin,geoview,shadow-tls}
         git clone https://github.com/xiaorouji/openwrt-passwall-packages package/passwall-packages
-        # 移除 openwrt feeds 过时的luci版本
         rm -rf feeds/luci/applications/luci-app-passwall
         git clone https://github.com/xiaorouji/openwrt-passwall package/passwall-luci
         rm -rf feeds/packages/lang/golang
         git clone https://github.com/kenzok8/golang -b 1.25 feeds/packages/lang/golang
         git clone https://github.com/sirpdboy/luci-app-lucky.git package/lucky
 
-    - name: Patch libxcrypt Makefile
-      run: |
-        sed -i '/^include \$(INCLUDE_DIR)\/package.mk/a TARGET_CFLAGS += -Wno-error=format-nonliteral' openwrt/feeds/packages/libs/libxcrypt/Makefile
-
     - name: Apply Custom .config
       run: |
-        cp rax3000m-2410.config openwrt/.config
-        cd openwrt
+        # 注意：rax3000m-2410.config 还在原来的 github.workspace 下
+        # 我们将其拷贝到大容量挂载目录的 openwrt 文件夹中
+        cp $GITHUB_WORKSPACE/rax3000m-2410.config /home/runner/work/openwrt_build/openwrt/.config
+        cd /home/runner/work/openwrt_build/openwrt
+        # 修复 libxcrypt 报错
+        sed -i '/^include \$(INCLUDE_DIR)\/package.mk/a TARGET_CFLAGS += -Wno-error=format-nonliteral' feeds/packages/libs/libxcrypt/Makefile
         make defconfig
         make -j$(nproc) download
-        make toolchain/install -j$(nproc)  # 强制构建工具链
+        make toolchain/install -j$(nproc)
 
     - name: Start Build
       run: |
-        cd openwrt
+        cd /home/runner/work/openwrt_build/openwrt
         make -j$(nproc) || make -j1 || make -j1 V=s
 
     - name: Package Firmware
       run: |
-        mkdir -p firmware-out
-        echo "Searching for firmware in: openwrt/bin/targets"
-        find openwrt/bin/targets -type f \( -name '*.bin' -o -name '*.img.gz' -o -name '*.itb' -o -name 'sha256sums' \) \
-          -exec echo "Copying: {}" \; \
-          -exec cp {} firmware-out/ \;
-    
-        # 检查是否找到文件
-        if [ -z "$(ls -A firmware-out)" ]; then
-          echo "⚠️ No firmware files found! Searching alternative locations..."
-          find openwrt/bin -type f \( -name '*.bin' -o -name '*.img*' -o -name '*.itb' -o -name 'sha256sums' \) \
-            -exec cp {} firmware-out/ \;
+        mkdir -p $GITHUB_WORKSPACE/firmware-out
+        cd /home/runner/work/openwrt_build/openwrt
+        find bin/targets -type f \( -name '*.bin' -o -name '*.img.gz' -o -name '*.itb' -o -name 'sha256sums' \) -exec cp {} $GITHUB_WORKSPACE/firmware-out/ \;
+        
+        # 兜底搜索
+        if [ -z "$(ls -A $GITHUB_WORKSPACE/firmware-out)" ]; then
+          find bin -type f \( -name '*.bin' -o -name '*.img*' -o -name '*.itb' -o -name 'sha256sums' \) -exec cp {} $GITHUB_WORKSPACE/firmware-out/ \;
         fi
-
-        echo "Copied files:"
-        ls -lh firmware-out/
+        ls -lh $GITHUB_WORKSPACE/firmware-out/
 
     - name: Generate Release Tag
       id: tag
@@ -123,28 +108,12 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ steps.tag.outputs.tag }}
-        name: "RAX3000M ImmortalWrt-24.10基础版固件 - ${{ steps.tag.outputs.tag }}"
+        name: "RAX3000M ImmortalWrt-24.10固件 - ${{ steps.tag.outputs.tag }}"
         body: |
-          📦 此为 RAX3000M 基于 Padavanonly/ImmortalWrt-mt798x-24.10源的编译固件。
-          ✅ 包含 Passwall、网络共享、FTP、lucky 等常用插件。
-          🔧 支持硬件加速、NTFS/exFAT。
-          🕒 自动构建时间：${{ steps.tag.outputs.tag }}
+          📦 RAX3000M 专用固件
+          基于 Padavanonly/ImmortalWrt-mt798x-24.10
         files: |
-          firmware-out/*
+          ${{ github.workspace }}/firmware-out/*
         generate_release_notes: true
-        draft: false
-        prerelease: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Show Disk Usage After Build
-      if: always()
-      run: df -h
-
-    - name: Upload Build Log on Failure
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-log
-        path: openwrt/logs/
-        retention-days: 7
