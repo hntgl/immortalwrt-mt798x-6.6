@@ -91,13 +91,20 @@ jobs:
     - name: Package Firmware
       run: |
         mkdir -p $GITHUB_WORKSPACE/firmware-out
-        cd /home/runner/work/openwrt_build/openwrt
-        find bin/targets -type f \( -name '*.bin' -o -name '*.img.gz' -o -name '*.itb' -o -name 'sha256sums' \) -exec cp {} $GITHUB_WORKSPACE/firmware-out/ \;
         
-        # 兜底搜索
-        if [ -z "$(ls -A $GITHUB_WORKSPACE/firmware-out)" ]; then
-          find bin -type f \( -name '*.bin' -o -name '*.img*' -o -name '*.itb' -o -name 'sha256sums' \) -exec cp {} $GITHUB_WORKSPACE/firmware-out/ \;
-        fi
+        # 进入编译产物最核心的目录 (MT7981 平台)
+        # 如果路径不对，这行 cd 会报错，从而提醒我们检查路径
+        cd /home/runner/work/openwrt_build/openwrt/bin/targets/mediatek/mt7981/
+
+        # 1. 拷贝当前目录下所有的文件 (不包含子目录，避免把巨大的 packages 文件夹拷进去)
+        # 这会包含 .json, .manifest, .buildinfo, .config 等
+        find . -maxdepth 1 -type f -exec cp {} $GITHUB_WORKSPACE/firmware-out/ \;
+        
+        # 2. 额外：把编译用的完整 .config 也拷进去，方便以后对照插件列表
+        cp /home/runner/work/openwrt_build/openwrt/.config $GITHUB_WORKSPACE/firmware-out/rax3000m-full.config
+
+        # 3. 检查结果
+        echo "检查待上传文件列表："
         ls -lh $GITHUB_WORKSPACE/firmware-out/
 
     - name: Generate Release Tag
@@ -110,10 +117,14 @@ jobs:
         tag_name: ${{ steps.tag.outputs.tag }}
         name: "RAX3000M ImmortalWrt-24.10固件 - ${{ steps.tag.outputs.tag }}"
         body: |
-          📦 RAX3000M 专用固件
+          📦 RAX3000M 专用固件 (包含passwall samba4 ftp lucky wechatpush等常用插件)
           基于 Padavanonly/ImmortalWrt-mt798x-24.10
-        files: |
-          ${{ github.workspace }}/firmware-out/*
+          ---
+          ✅ 包含文件说明：
+          - .bin / .itb: 固件主体
+          - .json / .manifest: 固件信息与软件包清单
+          - .config: 编译时的完整配置文件
+        files: ${{ github.workspace }}/firmware-out/*
         generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
