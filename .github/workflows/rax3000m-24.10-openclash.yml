@@ -7,8 +7,6 @@ on:
     paths:
       - 'rax3000m-openclash.config' # 仅配置文件变动时触发push编译
   workflow_dispatch:               # 支持手动触发
-  schedule:
-    - cron: '0 20 * * *'           # 每天北京时间 04:00 自动检查编译 (UTC 20:00)
 
 jobs:
   build:
@@ -51,23 +49,39 @@ jobs:
           python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs \
           upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd rustc cargo
 
-    - name: Clone ImmortalWrt Source
+     - name: Clone ImmortalWrt Source
       run: |
         cd /home/runner/work/openwrt_build
         git clone -b 2410 --single-branch --filter=blob:none https://github.com/padavanonly/immortalwrt-mt798x-24.10 openwrt
         cd openwrt
         
+        # 1. 更新 Feed，但在安装前先行剔除旧版 OpenClash
         ./scripts/feeds update -a
+        rm -rf feeds/luci/applications/luci-app-openclash
+        rm -rf feeds/packages/net/openclash
+        
+        # 2. 安装 Feed
         ./scripts/feeds install -a
 
-        # 1. 更新 Golang 环境 (最新 OpenClash 必须)
+        # 3. 更新 Golang 环境
         rm -rf feeds/packages/lang/golang
         git clone https://github.com/kenzok8/golang -b 1.25 feeds/packages/lang/golang
         
-        # 2. 拉取最新插件并确保覆盖旧版
-        rm -rf package/lucky package/luci-app-openclash
+        # 4. 【关键】在 package 目录下 clone 最新版，并强制删除任何可能存在的冲突
+        rm -rf package/luci-app-openclash
+        # 使用 --depth=1 获取 master 分支最新代码
+        git clone --depth=1 -b master https://github.com/vernesong/OpenClash.git package/luci-app-openclash
+
+        # 5. 拉取 Lucky
+        rm -rf package/lucky
         git clone https://github.com/sirpdboy/luci-app-lucky.git package/lucky
-        git clone -b master https://github.com/vernesong/OpenClash.git package/luci-app-openclash
+
+    - name: 强制刷新 OpenClash 版本定义
+      run: |
+        # 进入 OpenClash 目录，强制拉取最新远程变更（双重保险）
+        cd /home/runner/work/openwrt_build/openwrt/package/luci-app-openclash
+        git fetch --all
+        git reset --hard origin/master
 
     - name: Apply Custom .config & Fix Downloads
       run: |
@@ -104,7 +118,7 @@ jobs:
         mkdir -p $GITHUB_WORKSPACE/firmware-out
         cd /home/runner/work/openwrt_build/openwrt/bin/targets/mediatek/mt7981/
         find . -maxdepth 1 -type f -exec cp {} $GITHUB_WORKSPACE/firmware-out/ \;
-        cp /home/runner/work/openwrt_build/openwrt/.config $GITHUB_WORKSPACE/firmware-out/rax3000m-openclash-full.config
+        cp /home/runner/work/openwrt_build/openwrt/.config $GITHUB_WORKSPACE/firmware-out/rax3000m-openclash.config
 
     - name: Generate Release Tag
       id: tag
@@ -116,9 +130,9 @@ jobs:
         tag_name: ${{ steps.tag.outputs.tag }}
         name: "RAX3000M ImmortalWrt-24.10-openclash版固件 - ${{ steps.tag.outputs.tag }}"
         body: |
-          📦 RAX3000M 专用固件 (包含最新版 OpenClash & Lucky)
-          - 系统底座：ImmortalWrt 24.10 (Kernel 6.6)
-          - 核心集成：已预装 OpenClash Meta 运行内核
+          📦 RAX3000M 专用固件
+          - 系统版本：ImmortalWrt 24.10 
+          - 插件集成：openclash lucky samba4 ftp wechatpush
           - 触发方式：${{ github.event_name }}
           ---
           ✅ 文件包含：固件主体(.itb/.bin)、配置清单(.manifest)、完整编译配置(.config)
