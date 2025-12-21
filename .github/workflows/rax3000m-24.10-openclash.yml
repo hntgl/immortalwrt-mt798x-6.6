@@ -69,16 +69,6 @@ jobs:
         git clone https://github.com/sirpdboy/luci-app-lucky.git package/lucky
         git clone -b master https://github.com/vernesong/OpenClash.git package/luci-app-openclash
 
-    - name: 预集成 OpenClash Meta 内核
-      run: |
-        # 预下载内核，避免固件首次启动因网络问题无法开启 OpenClash
-        CORE_PATH="/home/runner/work/openwrt_build/openwrt/package/luci-app-openclash/root/etc/openclash/core"
-        mkdir -p $CORE_PATH
-        curl -L -o $CORE_PATH/clash_meta.tar.gz https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-arm64.tar.gz
-        tar -zxf $CORE_PATH/clash_meta.tar.gz -C $CORE_PATH/
-        chmod +x $CORE_PATH/clash*
-        rm -rf $CORE_PATH/clash_meta.tar.gz
-
     - name: Apply Custom .config & Fix Downloads
       run: |
         cp $GITHUB_WORKSPACE/rax3000m-openclash.config /home/runner/work/openwrt_build/openwrt/.config
@@ -86,10 +76,6 @@ jobs:
 
         # 修复 libxcrypt 链接报错
         sed -i '/^include \$(INCLUDE_DIR)\/package.mk/a TARGET_CFLAGS += -Wno-error=format-nonliteral' feeds/packages/libs/libxcrypt/Makefile
-
-        # 强制修正配置 (确保插件选中)
-        echo "CONFIG_PACKAGE_luci-app-openclash=y" >> .config
-        echo "CONFIG_PACKAGE_luci-app-lucky=y" >> .config
         
         make defconfig
 
