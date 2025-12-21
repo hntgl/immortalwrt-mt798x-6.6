@@ -49,7 +49,7 @@ jobs:
           python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs \
           upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd rustc cargo
 
-     - name: Clone ImmortalWrt Source
+    - name: Clone ImmortalWrt Source
       run: |
         cd /home/runner/work/openwrt_build
         git clone -b 2410 --single-branch --filter=blob:none https://github.com/padavanonly/immortalwrt-mt798x-24.10 openwrt
