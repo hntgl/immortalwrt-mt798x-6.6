@@ -140,7 +140,7 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ steps.tag.outputs.tag }}
-        name: "RAX3000M ImmortalWrt-24.10固件 - ${{ steps.tag.outputs.tag }}"
+        name: "RAX3000M ImmortalWrt-24.10-openclash版固件 - ${{ steps.tag.outputs.tag }}"
         body: |
           📦 RAX3000M 专用固件 (usboffload版)
           基于 Padavanonly/ImmortalWrt-mt798x-24.10，包含openclash samba4 ftp lucky wechatpush等常用插件
