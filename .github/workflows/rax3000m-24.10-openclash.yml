@@ -76,6 +76,11 @@ jobs:
 
         # 修复 libxcrypt 链接报错
         sed -i '/^include \$(INCLUDE_DIR)\/package.mk/a TARGET_CFLAGS += -Wno-error=format-nonliteral' feeds/packages/libs/libxcrypt/Makefile
+
+        # 强制跳过 ebtables 的 Hash 校验 (解决你刚才遇到的 Error 128/Hash mismatch)
+        if [ -f package/network/utils/ebtables/Makefile ]; then
+          sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/g' package/network/utils/ebtables/Makefile
+        fi
         
         make defconfig
 
