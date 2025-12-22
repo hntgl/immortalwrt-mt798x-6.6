@@ -94,7 +94,7 @@ jobs:
         cd /home/runner/work/openwrt_build/openwrt/package/luci-app-openclash
         git fetch --all
         git reset --hard origin/master
-    - name: Apply Custom .config & Fix Downloads
+    - name: Apply Custom .config
       run: |
         # 1. 拷贝配置文件
         cp $GITHUB_WORKSPACE/rax3000m-2410-6.6.config /home/runner/work/openwrt_build/openwrt/.config
@@ -137,7 +137,7 @@ jobs:
         
         # 进入编译产物最核心的目录 (MT7981 平台)
         # 如果路径不对，这行 cd 会报错，从而提醒我们检查路径
-        cd /home/runner/work/openwrt_build/openwrt/bin/targets/mediatek/mt7981/
+        cd /home/runner/work/openwrt_build/openwrt/bin/targets/mediatek/filogic/
 
         # 1. 拷贝当前目录下所有的文件 (不包含子目录，避免把巨大的 packages 文件夹拷进去)
         # 这会包含 .json, .manifest, .buildinfo, .config 等
