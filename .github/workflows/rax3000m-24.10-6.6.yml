@@ -61,6 +61,9 @@ jobs:
         git clone -b openwrt-24.10-6.6 --single-branch --filter=blob:none https://github.com/padavanonly/immortalwrt-mt798x-24.10 openwrt
         cd openwrt
         
+        echo "src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall.git;main" >> feeds.conf.default
+        echo "src-git passwall_luci https://github.com/xiaorouji/openwrt-passwall2.git;main" >> feeds.conf.default
+
         # 1. 更新 Feed，但在安装前先行剔除旧版 OpenClash
         ./scripts/feeds update -a
         rm -rf feeds/luci/applications/luci-app-openclash
@@ -83,10 +86,10 @@ jobs:
         git clone https://github.com/sirpdboy/luci-app-lucky.git package/lucky
 
         # 6. 拉取passwall
-        rm -rf feeds/packages/net/{xray-core,v2ray-geodata,sing-box,chinadns-ng,dns2socks,hysteria,ipt2socks,microsocks,naiveproxy,shadowsocks-libev,shadowsocks-rust,shadowsocksr-libev,simple-obfs,tcping,trojan-plus,tuic-client,v2ray-plugin,xray-plugin,geoview,shadow-tls}
-        git clone https://github.com/xiaorouji/openwrt-passwall-packages package/passwall-packages
-        rm -rf feeds/luci/applications/luci-app-passwall
-        git clone https://github.com/xiaorouji/openwrt-passwall package/passwall-luci
+        #rm -rf feeds/packages/net/{xray-core,v2ray-geodata,sing-box,chinadns-ng,dns2socks,hysteria,ipt2socks,microsocks,naiveproxy,shadowsocks-libev,shadowsocks-rust,shadowsocksr-libev,simple-obfs,tcping,trojan-plus,tuic-client,v2ray-plugin,xray-plugin,geoview,shadow-tls}
+        #git clone https://github.com/xiaorouji/openwrt-passwall-packages package/passwall-packages
+        #rm -rf feeds/luci/applications/luci-app-passwall
+        #git clone https://github.com/xiaorouji/openwrt-passwall package/passwall-luci
 
     - name: 强制刷新 OpenClash 版本定义
       run: |
@@ -160,7 +163,7 @@ jobs:
         tag_name: ${{ steps.tag.outputs.tag }}
         name: "RAX3000M ImmortalWrt-24.10-6.6固件 - ${{ steps.tag.outputs.tag }}"
         body: |
-          📦 RAX3000M 专用固件 (包含passwall openclash依赖 samba4 ftp lucky wechatpush等常用插件)
+          📦 RAX3000M 专用固件 (包含passwall2 openclash依赖 samba4 ftp lucky wechatpush等常用插件)
           基于 Padavanonly/ImmortalWrt-mt798x-24.10-6.6
           ---
           ✅ 包含文件说明：
