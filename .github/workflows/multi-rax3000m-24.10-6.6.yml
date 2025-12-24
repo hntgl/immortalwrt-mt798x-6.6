@@ -1,24 +1,25 @@
 name: Immortalwrt-24.10-6.6 插件选择版RAX3000M固件
+
 on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
-    inputs:
-      config_file:
-        description: '请选择要使用的配置文件 (.config)'
-        required: true
-        default: '24.10-6.6-passwall.config'
-        type: choice
-        options:
-          - '24.10-6.6-passwall.config'
-          - '24.10-6.6-passwall2.config'
-          - '24.10-6.6-passwall+openclash.config'
-          - '24.10-6.6-test.config'
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      config_file:
+        description: '请选择要使用的配置文件 (.config)'
+        required: true
+        default: '24.10-6.6-passwall.config'
+        type: choice
+        options:
+          - '24.10-6.6-passwall.config'
+          - '24.10-6.6-passwall2.config'
+          - '24.10-6.6-passwall+openclash.config'
+          - '24.10-6.6-test.config'
 
 jobs:
-  build:
-    runs-on: ubuntu-22.04
+  build:
+    runs-on: ubuntu-22.04
 
     steps:
     - name: Checkout Workflow Repo
