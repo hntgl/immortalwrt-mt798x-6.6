@@ -21,173 +21,99 @@ jobs:
   build:
     runs-on: ubuntu-22.04
 
-    steps:
-    - name: Checkout Workflow Repo
-      uses: actions/checkout@v4
+    steps:
+      - name: Checkout Workflow Repo
+        uses: actions/checkout@v4
 
-    - name: 清理磁盘空间并重新挂载大分区 (Maximize Build Space)
-      uses: easimon/maximize-build-space@master
-      with:
-        # 修正：挂载到工作空间的子目录，避免覆盖 GitHub Actions 自身的插件目录(_actions)
-        build-mount-path: /home/runner/work/openwrt_build
-        root-reserve-mb: 5120
-        swap-size-mb: 1
-        remove-dotnet: 'true'
-        remove-android: 'true'
-        remove-haskell: 'true'
-        remove-codeql: 'true'
-        remove-docker-images: 'true'
+      - name: 清理磁盘空间并重新挂载大分区 (Maximize Build Space)
+        uses: easimon/maximize-build-space@master
+        with:
+          build-mount-path: /home/runner/work/openwrt_build
+          root-reserve-mb: 5120
+          swap-size-mb: 1
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
 
-    - name: 配置虚拟内存 (Enable 4GB Swap)
-      run: |
-        # 使用新挂载的大容量目录创建 swap
-        SWAP_DIR="/home/runner/work/openwrt_build"
-        sudo fallocate -l 4G $SWAP_DIR/swapfile || sudo dd if=/dev/zero of=$SWAP_DIR/swapfile bs=1M count=4096
-        sudo chmod 600 $SWAP_DIR/swapfile
-        sudo mkswap $SWAP_DIR/swapfile
-        sudo swapon $SWAP_DIR/swapfile
-        free -h
+      - name: 配置虚拟内存 (Enable 4GB Swap)
+        run: |
+          SWAP_DIR="/home/runner/work/openwrt_build"
+          sudo fallocate -l 4G $SWAP_DIR/swapfile || sudo dd if=/dev/zero of=$SWAP_DIR/swapfile bs=1M count=4096
+          sudo chmod 600 $SWAP_DIR/swapfile
+          sudo mkswap $SWAP_DIR/swapfile
+          sudo swapon $SWAP_DIR/swapfile
+          free -h
 
-    - name: 深度清理系统残留
-      run: |
-        sudo rm -rf /usr/local/share/powershell /usr/share/swift /usr/local/lib/node_modules /cache
-        sudo apt-get clean
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib \
+            g++-multilib git gnutls-dev gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev \
+            libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
+            libreadline-dev libssl-dev libtool libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp nano \
+            ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils \
+            python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs \
+            upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
 
-    - name: Install Dependencies
-      run: |
-        sudo apt update
-        sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
-          bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib \
-          g++-multilib git gnutls-dev gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev \
-          libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
-          libreadline-dev libssl-dev libtool libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp nano \
-          ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils \
-          python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs \
-          upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
+      - name: Clone ImmortalWrt Source
+        run: |
+          cd /home/runner/work/openwrt_build
+          git clone -b openwrt-24.10-6.6 --single-branch --filter=blob:none https://github.com/padavanonly/immortalwrt-mt798x-24.10 openwrt
+          cd openwrt
+          ./scripts/feeds update -a
+          rm -rf feeds/luci/applications/luci-app-openclash
+          rm -rf feeds/packages/net/openclash
+          ./scripts/feeds install -a
+          rm -rf feeds/packages/lang/golang
+          git clone https://github.com/kenzok8/golang -b 1.25 feeds/packages/lang/golang
+          rm -rf package/luci-app-openclash
+          git clone --depth=1 -b master https://github.com/vernesong/OpenClash.git package/luci-app-openclash
+          rm -rf package/lucky
+          git clone https://github.com/sirpdboy/luci-app-lucky.git package/lucky
+          rm -rf feeds/packages/net/{xray-core,v2ray-geodata,sing-box,chinadns-ng,dns2socks,hysteria,ipt2socks,microsocks,naiveproxy,shadowsocks-libev,shadowsocks-rust,shadowsocksr-libev,simple-obfs,tcping,trojan-plus,tuic-client,v2ray-plugin,xray-plugin,geoview,shadow-tls}
+          git clone https://github.com/xiaorouji/openwrt-passwall-packages package/passwall-packages
+          rm -rf feeds/luci/applications/luci-app-passwall
+          git clone https://github.com/xiaorouji/openwrt-passwall package/passwall-luci
+          git clone --depth=1 https://github.com/xiaorouji/openwrt-passwall2 package/passwall2-luci
 
-    - name: Clone ImmortalWrt Source
-      run: |
-        # 进入 100G 的大容量挂载目录进行编译
-        cd /home/runner/work/openwrt_build
-        git clone -b openwrt-24.10-6.6 --single-branch --filter=blob:none https://github.com/padavanonly/immortalwrt-mt798x-24.10 openwrt
-        cd openwrt
-        
-        #echo "src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall.git;main" >> feeds.conf.default
-        #echo "src-git passwall_luci https://github.com/xiaorouji/openwrt-passwall2.git;main" >> feeds.conf.default
+      - name: Apply Custom .config
+        run: |
+          SELECTED_CONFIG="${{ github.event.inputs.config_file || '24.10-6.6-passwall.config' }}"
+          echo "MY_CONFIG_NAME=$SELECTED_CONFIG" >> $GITHUB_ENV
+          cp $GITHUB_WORKSPACE/$SELECTED_CONFIG /home/runner/work/openwrt_build/openwrt/.config
+          cd /home/runner/work/openwrt_build/openwrt
+          make defconfig
+          make -j$(nproc) download
 
-        # 1. 更新 Feed，但在安装前先行剔除旧版 OpenClash
-        ./scripts/feeds update -a
-        rm -rf feeds/luci/applications/luci-app-openclash
-        rm -rf feeds/packages/net/openclash
-        
-        # 2. 安装 Feed
-        ./scripts/feeds install -a
+      - name: Build Toolchain
+        run: |
+          cd /home/runner/work/openwrt_build/openwrt
+          make toolchain/install -j$(nproc)
 
-        # 3. 更新 Golang 环境
-        rm -rf feeds/packages/lang/golang
-        git clone https://github.com/kenzok8/golang -b 1.25 feeds/packages/lang/golang
-        
-        # 4. 【关键】在 package 目录下 clone 最新版，并强制删除任何可能存在的冲突
-        rm -rf package/luci-app-openclash
-        # 使用 --depth=1 获取 master 分支最新代码
-        git clone --depth=1 -b master https://github.com/vernesong/OpenClash.git package/luci-app-openclash
+      - name: Start Build
+        run: |
+          cd /home/runner/work/openwrt_build/openwrt
+          make -j$(nproc) || make -j1 V=s
 
-        # 5. 拉取 Lucky
-        rm -rf package/lucky
-        git clone https://github.com/sirpdboy/luci-app-lucky.git package/lucky
+      - name: Package Firmware
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/firmware-out
+          cd /home/runner/work/openwrt_build/openwrt/bin/targets/mediatek/filogic/
+          find . -maxdepth 1 -type f -exec cp {} $GITHUB_WORKSPACE/firmware-out/ \;
+          cp /home/runner/work/openwrt_build/openwrt/.config $GITHUB_WORKSPACE/firmware-out/${{ env.MY_CONFIG_NAME }}
 
-        # 6. 拉取passwall
-        rm -rf feeds/packages/net/{xray-core,v2ray-geodata,sing-box,chinadns-ng,dns2socks,hysteria,ipt2socks,microsocks,naiveproxy,shadowsocks-libev,shadowsocks-rust,shadowsocksr-libev,simple-obfs,tcping,trojan-plus,tuic-client,v2ray-plugin,xray-plugin,geoview,shadow-tls}
-        git clone https://github.com/xiaorouji/openwrt-passwall-packages package/passwall-packages
-        rm -rf feeds/luci/applications/luci-app-passwall
-        git clone https://github.com/xiaorouji/openwrt-passwall package/passwall-luci
-        git clone --depth=1 https://github.com/xiaorouji/openwrt-passwall2 package/passwall2-luci
+      - name: Generate Tag
+        id: tag
+        run: echo "tag=immortalwrt-$(date +'%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
 
-    - name: 强制刷新 OpenClash 版本定义
-      run: |
-        # 进入 OpenClash 目录，强制拉取最新远程变更（双重保险）
-        cd /home/runner/work/openwrt_build/openwrt/package/luci-app-openclash
-        git fetch --all
-        git reset --hard origin/master
-        
-    - name: Apply Custom .config
-      run: |
-        # 获取选择的文件名
-        SELECTED_CONFIG="${{ github.event.inputs.config_file || '24.10-6.6-passwall.config' }}"
-        
-        # 【关键】将文件名写入环境变量，供后续 Step 使用
-        echo "MY_CONFIG_NAME=$SELECTED_CONFIG" >> $GITHUB_ENV
-        
-        echo "正在使用配置文件: $SELECTED_CONFIG"
-        cp $GITHUB_WORKSPACE/$SELECTED_CONFIG /home/runner/work/openwrt_build/openwrt/.config
-        cd /home/runner/work/openwrt_build/openwrt
-        make defconfig
-
-        # 循环下载逻辑：最多重试 3 次
-        for i in {1..3}; do
-          echo "📥 正在进行第 $i 次软件包预下载..."
-          # 第一次多线程快下，失败则第二次单线程排查，第三次兜底
-          if [ $i -eq 1 ]; then
-            make -j$(nproc) download && break
-          else
-            echo "⚠️ 第 $i 次尝试：切换至单线程模式下载以提高稳定性..."
-            make -j1 download && break
-          fi
-          
-          if [ $i -lt 3 ]; then
-            echo "⏳ 下载未完全完成，5秒后进行下一次重试..."
-            sleep 5
-          else
-            echo "❌ 连续 3 次下载均未完全成功，尝试强行构建工具链..."
-          fi
-        done
-
-        # 构建工具链
-        echo "🔧 正在构建工具链 (此步骤耗时较长)..."
-        make toolchain/install -j$(nproc)
-
-    - name: Start Build
-      run: |
-        cd /home/runner/work/openwrt_build/openwrt
-        make -j$(nproc) || make -j1 || make -j1 V=s
-
-    - name: Package Firmware
-      run: |
-        mkdir -p $GITHUB_WORKSPACE/firmware-out
-        
-        # 进入编译产物最核心的目录 (MT7981 平台)
-        # 如果路径不对，这行 cd 会报错，从而提醒我们检查路径
-        cd /home/runner/work/openwrt_build/openwrt/bin/targets/mediatek/filogic/
-
-        # 1. 拷贝当前目录下所有的文件 (不包含子目录，避免把巨大的 packages 文件夹拷进去)
-        # 这会包含 .json, .manifest, .buildinfo, .config 等
-        find . -maxdepth 1 -type f -exec cp {} $GITHUB_WORKSPACE/firmware-out/ \;
-        
-        # 2. 额外：把编译用的完整 .config 也拷进去，方便以后对照插件列表
-        cp /home/runner/work/openwrt_build/openwrt/.config $GITHUB_WORKSPACE/firmware-out/${{ env.MY_CONFIG_NAME }}
-        # 3. 检查结果
-        echo "检查待上传文件列表："
-        ls -lh $GITHUB_WORKSPACE/firmware-out/
-
-    - name: Generate Release Tag
-      id: tag
-      run: echo "tag=immortalwrt-$(date +'%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
-
-    - name: Upload to GitHub Release
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: ${{ steps.tag.outputs.tag }}
-        # 使用 env 中保存的变量名，这样无论是手动还是自动触发都有名字
-        name: "RAX3000M [${{ env.MY_CONFIG_NAME }}] - ${{ steps.tag.outputs.tag }}"
-        body: |
-          📦 基于 Padavanonly/ImmortalWrt-mt798x-24.10-6.6编译的RAX3000M 专用固件 
-             包含passwall(2)/openclash samba4 ftp lucky wechatpush等常用插件
-          ---
-          ✅ 包含文件说明：
-          - .bin / .itb: 固件主体
-          - .json / .manifest: 固件信息与软件包清单
-          - .config: 编译时的完整配置文件
-        files: ${{ github.workspace }}/firmware-out/*
-        generate_release_notes: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: "RAX3000M [${{ env.MY_CONFIG_NAME }}] - ${{ steps.tag.outputs.tag }}"
+          files: ${{ github.workspace }}/firmware-out/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
