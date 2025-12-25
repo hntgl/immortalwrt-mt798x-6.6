@@ -15,6 +15,7 @@ on:
           - '24.10-6.6-passwall+openclash.config'
           - '24.10-6.6-passwall2.config'
           - '24.10-6.6-passwall&openclash.config'
+          - '24.10-6.6-passwall.config'
           - '24.10-6.6-openclash.config'
 
 jobs:
