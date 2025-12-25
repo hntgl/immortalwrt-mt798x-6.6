@@ -1,4 +1,4 @@
-name: Immortalwrt-24.10-6.6 插件选择版RAX3000M固件
+name: Immortalwrt-24.10-6.6 插件选择版RAX3000M固件编译
 
 on:
   push:
@@ -15,7 +15,7 @@ on:
           - '24.10-6.6-passwall.config'
           - '24.10-6.6-passwall2.config'
           - '24.10-6.6-passwall+openclash.config'
-          - '24.10-6.6-test.config'
+          - '24.10-6.6-openclash.config'
 
 jobs:
   build:
@@ -114,6 +114,9 @@ jobs:
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: "RAX3000M [${{ env.MY_CONFIG_NAME }}] - ${{ steps.tag.outputs.tag }}"
+          body: |
+            基于 Padavanonly/ImmortalWrt-mt798x-24.10-6.6 编译的 RAX3000M 专用固件
+            包含passwall(2)/openclash samba4 ftp lucky wechatpush autoreboot等常用插件
           files: ${{ github.workspace }}/firmware-out/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
