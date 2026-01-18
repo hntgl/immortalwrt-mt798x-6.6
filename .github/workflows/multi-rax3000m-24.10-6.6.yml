@@ -17,6 +17,7 @@ on:
           - '24.10-6.6-passwall&openclash.config'
           - '24.10-6.6-passwall.config'
           - '24.10-6.6-openclash.config'
+          - '24.10-6.6-openclash-test.config'
           - '24.10-6.6-openclash-ksmbd.config'
           - '24.10-6.6-openclash+passwall-ksmbd.config'
           - '24.10-6.6-openclash+passwall2-ksmbd.config'
