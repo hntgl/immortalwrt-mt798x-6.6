@@ -60,16 +60,34 @@ jobs:
           sudo mv /tmp /tmp_old && sudo ln -s $SWAP_DIR/tmp /tmp
           free -h
 
-      - name: Install Dependencies
+      - name: Install Dependencies & Space Rescue
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          # 1. 彻底清理根目录垃圾，为安装留出呼吸空间
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup
+          # 1. 定义大容量分区的路径
+          BIG_SPACE="/home/runner/work/openwrt_build"
+          
+          # 2. 强力清理根目录现有的零碎空间
+          sudo docker image prune -a -f
           sudo apt-get clean
+          
+          # 3. 【核心操作】将 /tmp 搬家到大分区
+          # 解决 "Couldn't create temporary file" 报错
+          sudo mkdir -p $BIG_SPACE/tmp
+          sudo chmod 1777 $BIG_SPACE/tmp
+          sudo mv /tmp /tmp_old
+          sudo ln -s $BIG_SPACE/tmp /tmp
+          
+          # 4. 【核心操作】将 apt 缓存搬家到大分区
+          # 解决 "You don't have enough free space in /var/cache/apt/archives"
+          sudo mkdir -p $BIG_SPACE/apt_cache/archives
+          sudo mv /var/cache/apt/archives /var/cache/apt/archives_old
+          sudo ln -s $BIG_SPACE/apt_cache/archives /var/cache/apt/archives
+          
+          # 5. 现在再开始更新索引和安装
           sudo apt-get update
-
-          # 2. 只安装编译固件【必需】的包，绝不安装任何 texlive 或 dblatex 相关
+          
+          # 仅安装核心编译包，依然禁用推荐安装以节省空间
           sudo apt-get install -y --no-install-recommends \
             ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
             bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk \
@@ -81,9 +99,8 @@ jobs:
             qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs \
             upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd rustc cargo
 
-          # 3. 再次清理 apt 缓存，腾出空间给后续编译
-          sudo apt-get autoremove -y
-          sudo apt-get clean
+          # 6. 安装完后清理没用的临时备份
+          sudo rm -rf /tmp_old /var/cache/apt/archives_old
 
       - name: Clone ImmortalWrt Source
         run: |
