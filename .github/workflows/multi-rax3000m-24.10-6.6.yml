@@ -105,23 +105,50 @@ jobs:
       - name: Clone ImmortalWrt Source
         run: |
           cd /home/runner/work/openwrt_build
+          export GIT_TERMINAL_PROMPT=0
+          
+          # 1. 克隆主源码
           git clone -b openwrt-24.10-6.6 --single-branch --filter=blob:none https://github.com/padavanonly/immortalwrt-mt798x-24.10 openwrt
           cd openwrt
+          
+          # 2. 更新基础 Feeds
           ./scripts/feeds update -a
+          
+          # 3. 【核心优化】清理自带的旧包，防止冲突
+          # 移除 OpenClash 旧版
           rm -rf feeds/luci/applications/luci-app-openclash
           rm -rf feeds/packages/net/openclash
+          
+          # 移除 Passwall 核心依赖旧版
+          rm -rf feeds/packages/net/{xray-core,v2ray-geodata,sing-box,chinadns-ng,dns2socks,hysteria,ipt2socks,microsocks,naiveproxy,shadowsocks-libev,shadowsocks-rust,shadowsocksr-libev,simple-obfs,tcping,trojan-plus,tuic-client,v2ray-plugin,xray-plugin,geoview,shadow-tls}
+          
+          # 移除 Passwall LuCI 旧版
+          rm -rf feeds/luci/applications/luci-app-passwall
+          
+          # 4. 安装 Feeds（此时 Feeds 里已经没有上述旧包了）
           ./scripts/feeds install -a
+
+          # 5. 克隆最新版插件到 package 目录（拥有最高优先级）
+          function clone_repo() {
+            local url=$1; local path=$2; local branch=${3:-main}
+            for i in {1..3}; do
+              git clone --depth=1 -b "$branch" "$url" "$path" && return 0 || sleep 5
+            done
+            return 1
+          }
+
+          echo "正在下载最新插件..."
+          # 使用官方组织 Openwrt-Passwall 的地址
+          clone_repo "https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git" "package/passwall-packages" "main"
+          clone_repo "https://github.com/Openwrt-Passwall/openwrt-passwall.git" "package/passwall-luci" "main"
+          
+          # OpenClash 和 Lucky
+          clone_repo "https://github.com/vernesong/OpenClash.git" "package/luci-app-openclash" "master"
+          clone_repo "https://github.com/sirpdboy/luci-app-lucky.git" "package/lucky" "main" || clone_repo "https://github.com/sirpdboy/luci-app-lucky.git" "package/lucky" "master"
+          
+          # 修复 Golang 版本 (很多新插件需要 go 1.23+)
           rm -rf feeds/packages/lang/golang
           git clone https://github.com/kenzok8/golang -b 1.25 feeds/packages/lang/golang
-          rm -rf package/luci-app-openclash
-          git clone --depth=1 -b master https://github.com/vernesong/OpenClash.git package/luci-app-openclash
-          rm -rf package/lucky
-          git clone https://github.com/sirpdboy/luci-app-lucky.git package/lucky
-          rm -rf feeds/packages/net/{xray-core,v2ray-geodata,sing-box,chinadns-ng,dns2socks,hysteria,ipt2socks,microsocks,naiveproxy,shadowsocks-libev,shadowsocks-rust,shadowsocksr-libev,simple-obfs,tcping,trojan-plus,tuic-client,v2ray-plugin,xray-plugin,geoview,shadow-tls}
-          git clone https://github.com/xiaorouji/openwrt-passwall-packages package/passwall-packages
-          rm -rf feeds/luci/applications/luci-app-passwall
-          git clone https://github.com/xiaorouji/openwrt-passwall package/passwall-luci
-          git clone --depth=1 https://github.com/xiaorouji/openwrt-passwall2 package/passwall2-luci
 
       - name: Apply Custom .config & Fix Downloads
         run: |
