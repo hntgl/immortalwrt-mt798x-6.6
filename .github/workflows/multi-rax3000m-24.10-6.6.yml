@@ -60,45 +60,27 @@ jobs:
           sudo mv /tmp /tmp_old && sudo ln -s $SWAP_DIR/tmp /tmp
           free -h
 
-      - name: Install Dependencies & Space Rescue
+      - name: Install Dependencies & Toolchain fix
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          # 1. 定义大容量分区的路径
+          # 1. 基础清理与重定向 (沿用之前的优化)
           BIG_SPACE="/home/runner/work/openwrt_build"
+          sudo mkdir -p $BIG_SPACE/tmp $BIG_SPACE/apt_cache/archives
+          sudo mv /tmp /tmp_old && sudo ln -s $BIG_SPACE/tmp /tmp
+          sudo mv /var/cache/apt/archives /var/cache/apt/archives_old && sudo ln -s $BIG_SPACE/apt_cache/archives /var/cache/apt/archives
           
-          # 2. 强力清理根目录现有的零碎空间
-          sudo docker image prune -a -f
-          sudo apt-get clean
-          
-          # 3. 【核心操作】将 /tmp 搬家到大分区
-          # 解决 "Couldn't create temporary file" 报错
-          sudo mkdir -p $BIG_SPACE/tmp
-          sudo chmod 1777 $BIG_SPACE/tmp
-          sudo mv /tmp /tmp_old
-          sudo ln -s $BIG_SPACE/tmp /tmp
-          
-          # 4. 【核心操作】将 apt 缓存搬家到大分区
-          # 解决 "You don't have enough free space in /var/cache/apt/archives"
-          sudo mkdir -p $BIG_SPACE/apt_cache/archives
-          sudo mv /var/cache/apt/archives /var/cache/apt/archives_old
-          sudo ln -s $BIG_SPACE/apt_cache/archives /var/cache/apt/archives
-          
-          # 5. 现在再开始更新索引和安装
           sudo apt-get update
-          
-          # 仅安装核心编译包，依然禁用推荐安装以节省空        
-          sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
-            bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib \
-            g++-multilib git gnutls-dev gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev \
-            libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
-            libreadline-dev libssl-dev libtool libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp nano \
-            ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils \
-            python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs \
-            upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
-
-          # 6. 安装完后清理没用的临时备份
-          sudo rm -rf /tmp_old /var/cache/apt/archives_old
+          # 2. 增加 python3-setuptools 和更多构建工具
+          sudo apt-get install -y --no-install-recommends \
+            clang llvm lld pkg-config libssl-dev libelf-dev zlib1g-dev \
+            build-essential cmake bash curl python3-setuptools python3-dev \
+            python3-pip python3-ply python3-pyelftools
+            
+          # 3. 安装 Rust 工具链并使其全局可见
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source $HOME/.cargo/env
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Clone ImmortalWrt Source
         run: |
@@ -147,6 +129,11 @@ jobs:
           # 修复 Golang 版本 (很多新插件需要 go 1.23+)
           rm -rf feeds/packages/lang/golang
           git clone https://github.com/kenzok8/golang -b 1.25 feeds/packages/lang/golang
+
+          # 修复 python-setuptools/host 依赖警告
+          sed -i 's/python-setuptools\/host/python3-setuptools\/host/g' feeds/packages/lang/python/python3/Makefile 2>/dev/null || true
+          # 针对 python-pika 的专项修复
+          find feeds/packages -name Makefile -exec sed -i 's/python-setuptools\/host//g' {} +
 
       - name: Apply Custom .config & Fix Downloads
         run: |
