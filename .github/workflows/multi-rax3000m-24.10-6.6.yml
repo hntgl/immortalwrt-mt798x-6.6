@@ -132,9 +132,11 @@ jobs:
           rm -rf feeds/packages/lang/golang
           git clone https://github.com/kenzok8/golang -b 1.25 feeds/packages/lang/golang
 
-          # 6. 【依赖修复】强行更正 python-setuptools 路径错误
-          find feeds/packages -name Makefile -exec sed -i 's/python-setuptools\/host/python3-setuptools\/host/g' {} +
-          find feeds/packages -name Makefile -exec sed -i 's/python-pika\/host//g' {} +
+          # 6. 【重点修改：解决 WARNING】
+          # 将所有对 python3-setuptools/host 的依赖重定向到 python3/host
+          # 因为在 24.10 中，host 端的 setuptools 已经集成在 python3 的主机编译中了
+          find feeds/packages -name Makefile -exec sed -i 's/python3-setuptools\/host/python3\/host/g' {} +
+          find feeds/packages -name Makefile -exec sed -i 's/python-setuptools\/host/python3\/host/g' {} +
 
       - name: Apply Custom .config & Fix Rust 404
         run: |
