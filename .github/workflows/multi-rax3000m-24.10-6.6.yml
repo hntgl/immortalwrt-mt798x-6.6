@@ -48,22 +48,23 @@ jobs:
           remove-codeql: 'true'
           remove-docker-images: 'true'
 
-      - name: 配置虚拟内存 (Enable 4GB Swap) 与 路径重定向
+      - name: 配置虚拟内存 (Enable 8GB Swap) 与 路径重定向
         run: |
           BIG_SPACE="/home/runner/work/openwrt_build"
           
-          # 1. 配置 4GB 虚拟内存，防止编译 Rust/LLVM 时内存溢出 (OOM)
-          sudo fallocate -l 4G $BIG_SPACE/swapfile || sudo dd if=/dev/zero of=$BIG_SPACE/swapfile bs=1M count=4096
+          # 1. 配置 8GB 虚拟内存 (极限优化)
+          # Rust 编译 Host 极其消耗内存，4G 可能不够，直接拉满到 8G
+          sudo fallocate -l 8G $BIG_SPACE/swapfile || sudo dd if=/dev/zero of=$BIG_SPACE/swapfile bs=1M count=8192
           sudo chmod 600 $BIG_SPACE/swapfile
           sudo mkswap $BIG_SPACE/swapfile
           sudo swapon $BIG_SPACE/swapfile
           
-          # 2. 【核心修复】将 /tmp 重定向到大分区，解决 apt 报错
+          # 2. 将 /tmp 重定向到大分区 (防止 Rust 编译产生的临时文件撑爆根目录)
           sudo mkdir -p $BIG_SPACE/tmp
           sudo chmod 1777 $BIG_SPACE/tmp
           sudo mv /tmp /tmp_old && sudo ln -s $BIG_SPACE/tmp /tmp
           
-          # 3. 【核心修复】将 apt 缓存重定向到大分区，解决磁盘不足
+          # 3. 将 apt 缓存重定向到大分区
           sudo mkdir -p $BIG_SPACE/apt_cache/archives
           sudo mv /var/cache/apt/archives /var/cache/apt/archives_old && sudo ln -s $BIG_SPACE/apt_cache/archives /var/cache/apt/archives
           
@@ -74,8 +75,9 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt-get update
-          # 安装编译必需依赖，特别增加了 clang/llvm 以防 rust 404 后无法本地编译
-          # 移除了 texlive 等无用大包，增加 python3-setuptools 解决 host 依赖警告
+          # 安装编译必需依赖
+          # 特别增加: libssl-dev, pkg-config (Rust 编译必需)
+          # 特别增加: python3-setuptools (修复 Host Python 依赖)
           sudo apt-get install -y --no-install-recommends \
             ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
             bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk \
@@ -103,7 +105,7 @@ jobs:
           # 2. 更新基础 Feeds
           ./scripts/feeds update -a
           
-          # 3. 【去重优化】移除自带的旧版插件，防止与最新版冲突
+          # 3. 【去重优化】移除自带的旧版插件
           rm -rf feeds/luci/applications/luci-app-openclash
           rm -rf feeds/packages/net/openclash
           rm -rf feeds/packages/net/{xray-core,v2ray-geodata,sing-box,chinadns-ng,dns2socks,hysteria,ipt2socks,microsocks,naiveproxy,shadowsocks-libev,shadowsocks-rust,shadowsocksr-libev,simple-obfs,tcping,trojan-plus,tuic-client,v2ray-plugin,xray-plugin,geoview,shadow-tls}
@@ -112,7 +114,7 @@ jobs:
           # 4. 安装 Feeds
           ./scripts/feeds install -a
 
-          # 5. 克隆最新版插件 (带重试机制)
+          # 5. 克隆最新版插件
           function clone_repo() {
             local url=$1; local path=$2; local branch=${3:-main}
             for i in {1..3}; do
@@ -124,17 +126,17 @@ jobs:
           echo "下载最新版插件..."
           clone_repo "https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git" "package/passwall-packages" "main"
           clone_repo "https://github.com/Openwrt-Passwall/openwrt-passwall.git" "package/passwall-luci" "main"
+          # 注意：原配置中有 openwrt-passwall2，如不需要可注释掉
           clone_repo "https://github.com/Openwrt-Passwall/openwrt-passwall2" "package/passwall2-luci" "main"
           clone_repo "https://github.com/vernesong/OpenClash.git" "package/luci-app-openclash" "master"
           clone_repo "https://github.com/sirpdboy/luci-app-lucky.git" "package/lucky" "main" || clone_repo "https://github.com/sirpdboy/luci-app-lucky.git" "package/lucky" "master"
           
-          # 替换 Golang 为最新版 (防止编译失败)
+          # 替换 Golang
           rm -rf feeds/packages/lang/golang
           git clone https://github.com/kenzok8/golang -b 1.25 feeds/packages/lang/golang
 
-          # 6. 【重点修改：解决 WARNING】
-          # 将所有对 python3-setuptools/host 的依赖重定向到 python3/host
-          # 因为在 24.10 中，host 端的 setuptools 已经集成在 python3 的主机编译中了
+          # 6. 【Python 依赖修复 - 验证有效版】
+          # 解决 WARNING: Makefile has a build dependency on 'python3-setuptools/host', which does not exist
           find feeds/packages -name Makefile -exec sed -i 's/python3-setuptools\/host/python3\/host/g' {} +
           find feeds/packages -name Makefile -exec sed -i 's/python-setuptools\/host/python3\/host/g' {} +
 
@@ -145,26 +147,34 @@ jobs:
           echo "MY_CONFIG_NAME=$SELECTED_CONFIG" >> $GITHUB_ENV
           cp $GITHUB_WORKSPACE/$SELECTED_CONFIG .config
           
-          # 【核心修复】禁止 Rust 尝试从失效的 CI 链接下载 LLVM，解决 404 报错
+          # 【Rust 404 修复】禁止从 CI 下载，强制使用本地/系统 LLVM
           find feeds/packages/lang/rust -name "*.toml" -exec sed -i 's/download-ci-llvm = true/download-ci-llvm = false/g' {} + || true
           
-          # 修复 libxcrypt 等小报错
+          # 修复 libxcrypt
           sed -i '/^include \$(INCLUDE_DIR)\/package.mk/a TARGET_CFLAGS += -Wno-error=format-nonliteral' feeds/packages/libs/libxcrypt/Makefile || true
           
           make defconfig
-          # 下载源码包 (增加重试)
           for i in {1..3}; do make -j$(nproc) download && break || sleep 5; done
 
-      - name: Build Toolchain
+      - name: Build Toolchain (Split for Rust)
         run: |
           cd /home/runner/work/openwrt_build/openwrt
-          # 优先编译工具链
+          
+          # 【核心策略调整】
+          # 先用单线程 (-j1) 单独编译 rust-host。
+          # 这一步非常消耗内存，如果并发编译必死无疑 (OOM)。
+          # V=s 开启详细日志，方便出错时排查。
+          echo "Step 1: Compiling Host-Rust with single thread..."
+          make package/feeds/packages/rust/host/compile -j1 V=s
+          
+          # Rust 编完后，再全速编译剩余的工具链
+          echo "Step 2: Compiling remaining toolchain..."
           make toolchain/install -j$(nproc)
 
       - name: Start Build
         run: |
           cd /home/runner/work/openwrt_build/openwrt
-          # 全速编译，若失败则切换到单线程模式查看详细错误日志
+          # 工具链和 Rust 搞定后，全速编译固件
           make -j$(nproc) || make -j1 V=s
 
       - name: Package Firmware
@@ -184,11 +194,11 @@ jobs:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: "RAX3000M [${{ env.MY_CONFIG_NAME }}] - ${{ steps.tag.outputs.tag }}"
           body: |
-            设备: 亚瑟 RAX3000M (MT7981)
+            设备: RAX3000M (MT7981)
             源码: Padavanonly/ImmortalWrt-mt798x-24.10-6.6
             内核: 6.6
             配置文件: ${{ env.MY_CONFIG_NAME }}
-            修复: Rust 404 下载错误 / Python 依赖警告 / 磁盘空间重映射
+            特别修复: Rust Host OOM Fix (-j1), Python Dependency Patch
           files: ${{ github.workspace }}/firmware-out/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
