@@ -2,8 +2,7 @@ name: Immortalwrt-24.10-6.6 插件选择版RAX3000M固件编译
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
   workflow_dispatch:
     inputs:
       config_file:
@@ -30,13 +29,7 @@ jobs:
       - name: Checkout Workflow Repo
         uses: actions/checkout@v4
 
-      - name: 极限清理系统环境 (Extreme Cleanup)
-        run: |
-          # 删除系统预装的庞大软件包，释放根目录空间
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup
-          sudo apt-get clean
-
-      - name: 清理磁盘空间并重新挂载大分区
+      - name: 极限清理系统环境 & 扩容
         uses: easimon/maximize-build-space@master
         with:
           build-mount-path: /home/runner/work/openwrt_build
@@ -48,157 +41,114 @@ jobs:
           remove-codeql: 'true'
           remove-docker-images: 'true'
 
-      - name: 配置虚拟内存 (Enable 8GB Swap) 与 路径重定向
+      - name: 配置虚拟内存 (12GB Swap)
         run: |
           BIG_SPACE="/home/runner/work/openwrt_build"
-          
-          # 1. 配置 8GB 虚拟内存 (极限优化)
-          # Rust 编译 Host 极其消耗内存，4G 可能不够，直接拉满到 8G
-          sudo fallocate -l 8G $BIG_SPACE/swapfile || sudo dd if=/dev/zero of=$BIG_SPACE/swapfile bs=1M count=8192
+          # Rust 链接阶段非常吃内存，GitHub 默认 7G 必爆，这里加到 12G 保证万无一失
+          sudo fallocate -l 12G $BIG_SPACE/swapfile || sudo dd if=/dev/zero of=$BIG_SPACE/swapfile bs=1M count=12288
           sudo chmod 600 $BIG_SPACE/swapfile
           sudo mkswap $BIG_SPACE/swapfile
           sudo swapon $BIG_SPACE/swapfile
-          
-          # 2. 将 /tmp 重定向到大分区 (防止 Rust 编译产生的临时文件撑爆根目录)
-          sudo mkdir -p $BIG_SPACE/tmp
-          sudo chmod 1777 $BIG_SPACE/tmp
-          sudo mv /tmp /tmp_old && sudo ln -s $BIG_SPACE/tmp /tmp
-          
-          # 3. 将 apt 缓存重定向到大分区
-          sudo mkdir -p $BIG_SPACE/apt_cache/archives
-          sudo mv /var/cache/apt/archives /var/cache/apt/archives_old && sudo ln -s $BIG_SPACE/apt_cache/archives /var/cache/apt/archives
-          
           free -h
 
-      - name: Install Dependencies & Toolchain fix
+      - name: 安装基础编译依赖
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt-get update
-          # 安装编译必需依赖
-          # 特别增加: libssl-dev, pkg-config (Rust 编译必需)
-          # 特别增加: python3-setuptools (修复 Host Python 依赖)
-          sudo apt-get install -y --no-install-recommends \
-            ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
-            bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk \
-            gettext gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man intltool \
-            lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
-            libmpc-dev libmpfr-dev libncurses-dev libpython3-dev libreadline-dev libssl-dev \
-            libtool libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp nano ninja-build \
-            p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-pyelftools \
-            python3-setuptools qemu-utils re2c rsync scons squashfs-tools subversion swig \
-            texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd rustc cargo
-
-          # 预装系统级 Rust 环境 (方案 A)，辅助 OpenWrt 构建
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          sudo apt-get install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache clang cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib \
+            g++-multilib git gnutls-dev gperf haveged help2man intltool libelf-dev libglib2.0-dev \
+            libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev libreadline-dev \
+            libssl-dev libtool libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp ninja-build p7zip \
+            p7zip-full patch pkgconf python3 python3-pip python3-pyelftools python3-setuptools qemu-utils \
+            rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd \
+            zlib1g-dev zstd
+          sudo apt-get clean
 
       - name: Clone ImmortalWrt Source
         run: |
           cd /home/runner/work/openwrt_build
-          export GIT_TERMINAL_PROMPT=0
-          
-          # 1. 克隆主源码
           git clone -b openwrt-24.10-6.6 --single-branch --filter=blob:none https://github.com/padavanonly/immortalwrt-mt798x-24.10 openwrt
           cd openwrt
-          
-          # 2. 更新基础 Feeds
           ./scripts/feeds update -a
           
-          # 3. 【去重优化】移除自带的旧版插件
-          rm -rf feeds/luci/applications/luci-app-openclash
-          rm -rf feeds/packages/net/openclash
+          # 【去重】移除自带包 (保持你原有的逻辑)
+          rm -rf feeds/luci/applications/luci-app-openclash feeds/packages/net/openclash
           rm -rf feeds/packages/net/{xray-core,v2ray-geodata,sing-box,chinadns-ng,dns2socks,hysteria,ipt2socks,microsocks,naiveproxy,shadowsocks-libev,shadowsocks-rust,shadowsocksr-libev,simple-obfs,tcping,trojan-plus,tuic-client,v2ray-plugin,xray-plugin,geoview,shadow-tls}
           rm -rf feeds/luci/applications/luci-app-passwall
           
-          # 4. 安装 Feeds
           ./scripts/feeds install -a
 
-          # 5. 克隆最新版插件
+      - name: 克隆自定义插件
+        run: |
+          cd /home/runner/work/openwrt_build/openwrt
+          # 使用你原有的 clone_repo 函数逻辑
           function clone_repo() {
-            local url=$1; local path=$2; local branch=${3:-main}
-            for i in {1..3}; do
-              git clone --depth=1 -b "$branch" "$url" "$path" && return 0 || sleep 5
-            done
-            return 1
+            git clone --depth=1 -b "${3:-main}" "$1" "$2" || (sleep 5 && git clone --depth=1 -b "${3:-main}" "$1" "$2")
           }
-
-          echo "下载最新版插件..."
-          clone_repo "https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git" "package/passwall-packages" "main"
-          clone_repo "https://github.com/Openwrt-Passwall/openwrt-passwall.git" "package/passwall-luci" "main"
-          # 注意：原配置中有 openwrt-passwall2，如不需要可注释掉
-          clone_repo "https://github.com/Openwrt-Passwall/openwrt-passwall2" "package/passwall2-luci" "main"
+          clone_repo "https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git" "package/passwall-packages"
+          clone_repo "https://github.com/Openwrt-Passwall/openwrt-passwall.git" "package/passwall-luci"
+          clone_repo "https://github.com/Openwrt-Passwall/openwrt-passwall2" "package/passwall2-luci"
           clone_repo "https://github.com/vernesong/OpenClash.git" "package/luci-app-openclash" "master"
-          clone_repo "https://github.com/sirpdboy/luci-app-lucky.git" "package/lucky" "main" || clone_repo "https://github.com/sirpdboy/luci-app-lucky.git" "package/lucky" "master"
+          clone_repo "https://github.com/sirpdboy/luci-app-lucky.git" "package/lucky"
           
-          # 替换 Golang
+          # 替换 Golang (Passwall 依赖)
           rm -rf feeds/packages/lang/golang
           git clone https://github.com/kenzok8/golang -b 1.25 feeds/packages/lang/golang
 
-          # 6. 【Python 依赖修复 - 验证有效版】
-          # 解决 WARNING: Makefile has a build dependency on 'python3-setuptools/host', which does not exist
+      - name: 核心补丁：修复 Rust 404/Checksum & Python 依赖
+        run: |
+          cd /home/runner/work/openwrt_build/openwrt
+          
+          # 1. 彻底解决 Rust 404 和 Checksum 错误 (核心补丁)
+          # 禁止从 CI 下载 LLVM，强制本地编译。这能避开你在本地遇到的 e3b0c442 (空文件) 校验错误
+          find feeds/packages/lang/rust -name "Makefile" -exec sed -i 's/download-ci-llvm=true/download-ci-llvm=false/g' {} +
+          # 针对某些版本 rust 可能会读取 config.toml
+          find feeds/packages/lang/rust -name "*.toml" -exec sed -i 's/download-ci-llvm = true/download-ci-llvm = false/g' {} + || true
+          
+          # 2. 修复 Python setuptools 宿主依赖问题
           find feeds/packages -name Makefile -exec sed -i 's/python3-setuptools\/host/python3\/host/g' {} +
-          find feeds/packages -name Makefile -exec sed -i 's/python-setuptools\/host/python3\/host/g' {} +
 
-      - name: Apply Custom .config & Fix Rust 404
+      - name: 载入配置并预下载
         run: |
           cd /home/runner/work/openwrt_build/openwrt
           SELECTED_CONFIG="${{ github.event.inputs.config_file }}"
           echo "MY_CONFIG_NAME=$SELECTED_CONFIG" >> $GITHUB_ENV
           cp $GITHUB_WORKSPACE/$SELECTED_CONFIG .config
           
-          # 【Rust 404 修复】禁止从 CI 下载，强制使用本地/系统 LLVM
-          find feeds/packages/lang/rust -name "*.toml" -exec sed -i 's/download-ci-llvm = true/download-ci-llvm = false/g' {} + || true
-          
-          # 修复 libxcrypt
-          sed -i '/^include \$(INCLUDE_DIR)\/package.mk/a TARGET_CFLAGS += -Wno-error=format-nonliteral' feeds/packages/libs/libxcrypt/Makefile || true
-          
           make defconfig
-          for i in {1..3}; do make -j$(nproc) download && break || sleep 5; done
+          # 清理可能存在的下载残留，强制重新开启干净下载
+          rm -rf dl/rustc/*
+          make download -j$(nproc)
 
-      - name: Build Toolchain (Split for Rust)
+      - name: 编译 Host-Rust (解决本地死循环的关键步骤)
         run: |
           cd /home/runner/work/openwrt_build/openwrt
-          
-          # 【核心策略调整】
-          # 先用单线程 (-j1) 单独编译 rust-host。
-          # 这一步非常消耗内存，如果并发编译必死无疑 (OOM)。
-          # V=s 开启详细日志，方便出错时排查。
-          echo "Step 1: Compiling Host-Rust with single thread..."
+          # 采用单线程编译 Rust，防止多线程竞争导致 OOM Killed
+          # 这一步会执行你在本地成功的 "Building CXX object" 过程
           make package/feeds/packages/rust/host/compile -j1 V=s
-          
-          # Rust 编完后，再全速编译剩余的工具链
-          echo "Step 2: Compiling remaining toolchain..."
-          make toolchain/install -j$(nproc)
 
-      - name: Start Build
+      - name: 编译全量固件
         run: |
           cd /home/runner/work/openwrt_build/openwrt
-          # 工具链和 Rust 搞定后，全速编译固件
+          # Rust 编完后，其他部分可以开启全速编译
           make -j$(nproc) || make -j1 V=s
 
-      - name: Package Firmware
+      - name: 整理固件并上传
+        if: always()
         run: |
           mkdir -p $GITHUB_WORKSPACE/firmware-out
           cd /home/runner/work/openwrt_build/openwrt/bin/targets/mediatek/filogic/
-          find . -maxdepth 1 -type f -exec cp {} $GITHUB_WORKSPACE/firmware-out/ \;
-          cp /home/runner/work/openwrt_build/openwrt/.config $GITHUB_WORKSPACE/firmware-out/${{ env.MY_CONFIG_NAME }}
+          cp -f *.bin $GITHUB_WORKSPACE/firmware-out/ || true
+          cp -f /home/runner/work/openwrt_build/openwrt/.config $GITHUB_WORKSPACE/firmware-out/${{ env.MY_CONFIG_NAME }}
 
-      - name: Generate Tag
-        id: tag
-        run: echo "tag=immortalwrt-$(date +'%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
-
-      - name: Upload Release
+      - name: 发布 Release
         uses: softprops/action-gh-release@v1
+        if: success()
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: "RAX3000M [${{ env.MY_CONFIG_NAME }}] - ${{ steps.tag.outputs.tag }}"
-          body: |
-            设备: RAX3000M (MT7981)
-            源码: Padavanonly/ImmortalWrt-mt798x-24.10-6.6
-            内核: 6.6
-            配置文件: ${{ env.MY_CONFIG_NAME }}
-            特别修复: Rust Host OOM Fix (-j1), Python Dependency Patch
+          tag_name: immortalwrt-$(date +'%Y%m%d-%H%M')
+          name: "RAX3000M 固件 [${{ env.MY_CONFIG_NAME }}]"
           files: ${{ github.workspace }}/firmware-out/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
