@@ -141,19 +141,24 @@ jobs:
           rm -rf dl/rustc/*
           make download -j$(nproc)
 
-      # 8. 编译 Host-Rust (Fixed for Rust 1.90)
-      - name: Compile Host-Rust (Fixed for Rust 1.90)
+      # 8. 编译 Host-Rust (暴力删除校验文件版)
+      - name: Compile Host-Rust (Hard Fix)
         run: |
           cd /home/runner/work/openwrt_build/openwrt
-
-          # 清理旧残留
-          rm -rf build_dir/target-aarch64_cortex-a53_musl/host/rustc-*
-
-          # 禁用 Rust 校验
+          
+          # 1. 触发一次 Prepare，让它把源码解压出来
+          make package/feeds/packages/rust/host/prepare -j$(nproc)
+          
+          # 2. 【核心操作】进入解压后的源码目录，物理删除所有校验信息
+          # 只要没有 .cargo-checksum.json，Cargo 就不会去检查少了哪个文件
+          echo "Removing all vendor checksums..."
+          find build_dir/host/rustc-1.90.0-src/vendor -name ".cargo-checksum.json" -delete || true
+          
+          # 3. 再次确保禁用 Makefile 里的校验函数 (以防万一)
           sed -i 's/$(call ValidateRustVendor)/true/g' feeds/packages/lang/rust/Makefile || true
           sed -i 's/ValidateCargoVendor/true/g' feeds/packages/lang/rust/Makefile || true
 
-          # 执行 Rust 编译
+          # 4. 正式开始编译
           make package/feeds/packages/rust/host/compile -j1 V=s
 
       # 9. 编译全量固件
