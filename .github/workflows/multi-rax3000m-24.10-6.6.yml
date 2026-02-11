@@ -55,7 +55,6 @@ jobs:
           free -h
 
       # 3. 安装依赖 (修复 TeX 报错的关键步骤)
-      # 已剔除 dblatex, asciidoc, xmlto 等导致 tex-common 错误的包
       - name: 安装基础编译依赖
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -142,6 +141,7 @@ jobs:
           rm -rf dl/rustc/*
           make download -j$(nproc)
 
+      # 8. 编译 Host-Rust (Fixed for Rust 1.90)
       - name: Compile Host-Rust (Fixed for Rust 1.90)
         run: |
           cd /home/runner/work/openwrt_build/openwrt
@@ -149,20 +149,18 @@ jobs:
           # 清理旧残留
           rm -rf build_dir/target-aarch64_cortex-a53_musl/host/rustc-*
 
-          # 核心修复：禁用 vendor 校验
-          sed -i 's/$(call ValidateRustVendor)/true/g' \
-            feeds/packages/lang/rust/Makefile || true
-          sed -i 's/ValidateCargoVendor/true/g' \
-            feeds/packages/lang/rust/Makefile || true
+          # 禁用 Rust 校验
+          sed -i 's/$(call ValidateRustVendor)/true/g' feeds/packages/lang/rust/Makefile || true
+          sed -i 's/ValidateCargoVendor/true/g' feeds/packages/lang/rust/Makefile || true
 
+          # 执行 Rust 编译
           make package/feeds/packages/rust/host/compile -j1 V=s
-
 
       # 9. 编译全量固件
       - name: Compile Firmware
         run: |
           cd /home/runner/work/openwrt_build/openwrt
-          echo "Rust compiled successfully. Starting full build..."
+          echo "Rust 编译成功，开始全量编译..."
           make -j$(nproc) || make -j1 V=s
 
       # 10. 整理输出
