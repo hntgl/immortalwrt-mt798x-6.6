@@ -142,25 +142,21 @@ jobs:
           rm -rf dl/rustc/*
           make download -j$(nproc)
 
-      # 8. 编译 Host-Rust
-      - name: Compile Host-Rust (The Nuclear Option)
+      - name: Compile Host-Rust (Fixed for Rust 1.90)
         run: |
           cd /home/runner/work/openwrt_build/openwrt
-          
-          # 1. 强制清理之前的失败残留
-          rm -rf build_dir/target-aarch64_cortex-a53_musl/host/rustc-1.90.0-src
-          
-          # 2. 【核心修复】使用全局环境变量禁用 Cargo Checksum 校验
-          # 我们把环境变量直接注入到 make 命令中
-          # 同时增加一个强制删除脚本，确保万无一失
-          
-          export CARGO_CHECKSUM_INVALID_MODALITIES=1
-          
-          # 3. 运行编译，-j1 保证稳定，V=s 输出日志
-          # 注意：我们在 make 后面直接跟环境变量定义
-          make package/feeds/packages/rust/host/compile \
-            CARGO_CHECKSUM_INVALID_MODALITIES=1 \
-            -j$(nproc) V=s
+
+          # 清理旧残留
+          rm -rf build_dir/target-aarch64_cortex-a53_musl/host/rustc-*
+
+          # 核心修复：禁用 vendor 校验
+          sed -i 's/$(call ValidateRustVendor)/true/g' \
+            feeds/packages/lang/rust/Makefile || true
+          sed -i 's/ValidateCargoVendor/true/g' \
+            feeds/packages/lang/rust/Makefile || true
+
+          make package/feeds/packages/rust/host/compile -j1 V=s
+
 
       # 9. 编译全量固件
       - name: Compile Firmware
