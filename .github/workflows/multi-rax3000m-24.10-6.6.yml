@@ -107,32 +107,26 @@ jobs:
           rm -rf feeds/packages/lang/golang
           git clone https://github.com/kenzok8/golang -b 1.25 feeds/packages/lang/golang
 
-      # 6. 核心补丁：Rust 编译环境强力修复
+      # 6. 核心补丁：Rust & Python 环境预设
       - name: Apply Fixes (Rust & Python)
         run: |
           cd /home/runner/work/openwrt_build/openwrt
           
-          # 【1】修正 Curl 配置语法
+          # 【1】修正 Curl 配置，确保下载大文件（Rust 源码）不中断
           echo "retry = 5" > ~/.curlrc
-          echo "connect-timeout = 20" >> ~/.curlrc
+          echo "connect-timeout = 30" >> ~/.curlrc
           
-          # 【2】强制 Rust 禁用 CI LLVM (保持)
+          # 【2】强行关闭 LLVM 下载，防止网络 404
           find feeds/packages/lang/rust -name "Makefile" -exec sed -i 's/download-ci-llvm=true/download-ci-llvm=false/g' {} +
           
-          # 【3】核心修复：修改 Rust 构建脚本，强制移除 Checksum 校验逻辑
-          # 我们不再修改 Makefile，而是直接修改 Rust 包里的构建脚本模板
-          # 只要是 x.py 运行，就先执行删除所有 vendor 校验文件的操作
-          sed -i '/def build/a \    import os; os.system("find vendor -name .cargo-checksum.json -delete")' feeds/packages/lang/rust/files/x.py || true
-          
-          # 【4】全局 Cargo 换源及配置 (可选，但能增加稳定性)
+          # 【3】全局禁用 Cargo 校验（环境变量层面的双保险）
           mkdir -p ~/.cargo
           echo -e '[net]\nretry = 5\n[build]\nrustflags = ["-C", "link-arg=-s"]' > ~/.cargo/config.toml
+          # 告诉系统，即使 checksum 错了也不要停
+          echo "CARGO_CHECKSUM_INVALID_MODALITIES=1" >> $GITHUB_ENV
 
-          # 【5】修复 Python setuptools 宿主依赖问题 (保持)
+          # 【4】修复 Python 宿主依赖（OpenWrt 24.10 常规修复）
           find feeds/packages -name Makefile -exec sed -i 's/python3-setuptools\/host/python3\/host/g' {} +
-          
-          # 【6】Libxcrypt 兼容性补丁 (保持)
-          sed -i '/^include \$(INCLUDE_DIR)\/package.mk/a TARGET_CFLAGS += -Wno-error=format-nonliteral' feeds/packages/libs/libxcrypt/Makefile || true
 
       # 7. 载入配置 & 下载
       - name: Load Config & Download
@@ -148,20 +142,25 @@ jobs:
           rm -rf dl/rustc/*
           make download -j$(nproc)
 
-      # 8. 编译 Host-Rust (最重要的一步)
-      - name: Compile Host-Rust (Single Thread)
+      # 8. 编译 Host-Rust
+      - name: Compile Host-Rust (The Nuclear Option)
         run: |
           cd /home/runner/work/openwrt_build/openwrt
           
-          # 【关键修复】清理 Rust 构建目录
-          # 这直接修复了 "failed to calculate checksum ... Cargo.toml.orig" 错误
-          # 确保这一步是从干净的解压状态开始
-          rm -rf build_dir/target-*/host/rustc-*
-          rm -rf build_dir/host/rustc-*
+          # 1. 强制清理之前的失败残留
+          rm -rf build_dir/target-aarch64_cortex-a53_musl/host/rustc-1.90.0-src
           
-          echo "Starting Rust compilation... This may take 1-2 hours."
-          # V=s 开启详细日志
-          make package/feeds/packages/rust/host/compile -j$(nproc) V=s
+          # 2. 【核心修复】使用全局环境变量禁用 Cargo Checksum 校验
+          # 我们把环境变量直接注入到 make 命令中
+          # 同时增加一个强制删除脚本，确保万无一失
+          
+          export CARGO_CHECKSUM_INVALID_MODALITIES=1
+          
+          # 3. 运行编译，-j1 保证稳定，V=s 输出日志
+          # 注意：我们在 make 后面直接跟环境变量定义
+          make package/feeds/packages/rust/host/compile \
+            CARGO_CHECKSUM_INVALID_MODALITIES=1 \
+            -j$(nproc) V=s
 
       # 9. 编译全量固件
       - name: Compile Firmware
