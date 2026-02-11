@@ -51,19 +51,30 @@ jobs:
           sudo swapon $BIG_SPACE/swapfile
           free -h
 
-      - name: 安装基础编译依赖
+      - name: Install Dependencies & Toolchain fix
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
+          # 1. 尝试安装核心编译工具，排除导致错误的 dblatex 和 texlive 相关包
           sudo apt-get update
-          sudo apt-get install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
-            bzip2 ccache clang cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib \
-            g++-multilib git gnutls-dev gperf haveged help2man intltool libelf-dev libglib2.0-dev \
-            libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev libreadline-dev \
-            libssl-dev libtool libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp ninja-build p7zip \
-            p7zip-full patch pkgconf python3 python3-pip python3-pyelftools python3-setuptools qemu-utils \
-            rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd \
-            zlib1g-dev zstd
+          sudo apt-get install -y --no-install-recommends \
+            ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache clang cmake cpio curl device-tree-compiler fastjar flex gawk \
+            gettext gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man intltool \
+            libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev \
+            libncurses-dev libpython3-dev libreadline-dev libssl-dev libtool libyaml-dev \
+            libz-dev lld llvm lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full \
+            patch pkgconf python3 python3-pip python3-pyelftools python3-setuptools \
+            qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo \
+            uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
+
+          # 2. 如果之前有配置失败的残留，强制修复并忽略错误
+          sudo dpkg --configure -a || true
+          
+          # 3. 彻底清理不必要的系统级 Rust (我们要用 OpenWrt 源码里编译出来的)
+          sudo apt-get purge -y rustc cargo || true
+          
+          sudo apt-get autoremove -y
           sudo apt-get clean
 
       - name: Clone ImmortalWrt Source
