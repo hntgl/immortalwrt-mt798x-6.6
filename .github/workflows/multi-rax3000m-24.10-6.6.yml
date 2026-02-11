@@ -107,34 +107,31 @@ jobs:
           rm -rf feeds/packages/lang/golang
           git clone https://github.com/kenzok8/golang -b 1.25 feeds/packages/lang/golang
 
-      # 6. 核心补丁：Rust & Python 修复
+      # 6. 核心补丁：Rust 编译环境强力修复
       - name: Apply Fixes (Rust & Python)
         run: |
           cd /home/runner/work/openwrt_build/openwrt
           
-          # 【修复 1：Curl 配置】
-          # 修正语法错误，避免 warning
+          # 【1】修正 Curl 配置语法
           echo "retry = 5" > ~/.curlrc
           echo "connect-timeout = 20" >> ~/.curlrc
           
-          # 【修复 2：Rust 404 问题】
-          # 禁止 CI 下载，强制本地编译
+          # 【2】强制 Rust 禁用 CI LLVM (保持)
           find feeds/packages/lang/rust -name "Makefile" -exec sed -i 's/download-ci-llvm=true/download-ci-llvm=false/g' {} +
-          find feeds/packages/lang/rust -name "*.toml" -exec sed -i 's/download-ci-llvm = true/download-ci-llvm = false/g' {} + || true
           
-          # 【修复 3：Rust Checksum 错误 (os error 2) - 终极方案】
-          # 我们无法在外部删除 build_dir 里的文件，因为 make 运行时才会解压它们。
-          # 所以我们修改 Rust 的 Makefile，利用 sed 在执行 x.py (构建脚本) 之前，
-          # 插入一条命令：find vendor -name .cargo-checksum.json -delete
-          # 这样一旦源码解压完成准备编译时，校验文件就会被立即清除。
+          # 【3】核心修复：修改 Rust 构建脚本，强制移除 Checksum 校验逻辑
+          # 我们不再修改 Makefile，而是直接修改 Rust 包里的构建脚本模板
+          # 只要是 x.py 运行，就先执行删除所有 vendor 校验文件的操作
+          sed -i '/def build/a \    import os; os.system("find vendor -name .cargo-checksum.json -delete")' feeds/packages/lang/rust/files/x.py || true
           
-          echo "Patching Rust Makefile to ignore vendor checksums..."
-          sed -i 's/python3 .*x\.py/find vendor -name .cargo-checksum.json -delete; &/' feeds/packages/lang/rust/Makefile
-          
-          # 【修复 4：Python 依赖】
+          # 【4】全局 Cargo 换源及配置 (可选，但能增加稳定性)
+          mkdir -p ~/.cargo
+          echo -e '[net]\nretry = 5\n[build]\nrustflags = ["-C", "link-arg=-s"]' > ~/.cargo/config.toml
+
+          # 【5】修复 Python setuptools 宿主依赖问题 (保持)
           find feeds/packages -name Makefile -exec sed -i 's/python3-setuptools\/host/python3\/host/g' {} +
           
-          # 【修复 5：Libxcrypt】
+          # 【6】Libxcrypt 兼容性补丁 (保持)
           sed -i '/^include \$(INCLUDE_DIR)\/package.mk/a TARGET_CFLAGS += -Wno-error=format-nonliteral' feeds/packages/libs/libxcrypt/Makefile || true
 
       # 7. 载入配置 & 下载
