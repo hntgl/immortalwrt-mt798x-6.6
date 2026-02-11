@@ -29,54 +29,53 @@ jobs:
       - name: Checkout Workflow Repo
         uses: actions/checkout@v4
 
+      # 1. 磁盘扩容 (保持你的配置，但禁用自带 Swap 以便后续手动创建更大的)
       - name: 极限清理系统环境 & 扩容
         uses: easimon/maximize-build-space@master
         with:
           build-mount-path: /home/runner/work/openwrt_build
           root-reserve-mb: 5120
-          swap-size-mb: 1
+          swap-size-mb: 1  # 设置为 1 禁用默认，我们在下一步手动创建
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
           remove-codeql: 'true'
           remove-docker-images: 'true'
 
+      # 2. 手动创建 12GB Swap (解决 Rust 编译 OOM 内存溢出)
       - name: 配置虚拟内存 (12GB Swap)
         run: |
           BIG_SPACE="/home/runner/work/openwrt_build"
-          # Rust 链接阶段非常吃内存，GitHub 默认 7G 必爆，这里加到 12G 保证万无一失
+          mkdir -p $BIG_SPACE
+          # 创建 12G 的 Swap 文件
           sudo fallocate -l 12G $BIG_SPACE/swapfile || sudo dd if=/dev/zero of=$BIG_SPACE/swapfile bs=1M count=12288
           sudo chmod 600 $BIG_SPACE/swapfile
           sudo mkswap $BIG_SPACE/swapfile
           sudo swapon $BIG_SPACE/swapfile
           free -h
 
-      - name: Install Dependencies & Toolchain fix
+      # 3. 安装依赖 (修复 TeX 报错的关键步骤)
+      # 已剔除 dblatex, asciidoc, xmlto 等导致 tex-common 错误的包
+      - name: 安装基础编译依赖
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          # 1. 尝试安装核心编译工具，排除导致错误的 dblatex 和 texlive 相关包
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+            ack antlr3 autoconf automake autopoint binutils bison build-essential \
             bzip2 ccache clang cmake cpio curl device-tree-compiler fastjar flex gawk \
             gettext gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man intltool \
             libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev \
             libncurses-dev libpython3-dev libreadline-dev libssl-dev libtool libyaml-dev \
-            libz-dev lld llvm lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full \
-            patch pkgconf python3 python3-pip python3-pyelftools python3-setuptools \
-            qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo \
-            uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
+            libz-dev lld llvm lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf \
+            python3 python3-pip python3-pyelftools python3-setuptools qemu-utils re2c rsync \
+            scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xxd zstd
 
-          # 2. 如果之前有配置失败的残留，强制修复并忽略错误
-          sudo dpkg --configure -a || true
-          
-          # 3. 彻底清理不必要的系统级 Rust (我们要用 OpenWrt 源码里编译出来的)
-          sudo apt-get purge -y rustc cargo || true
-          
-          sudo apt-get autoremove -y
+          # 清理可能存在的残留
           sudo apt-get clean
+          sudo userdel -r builder 2>/dev/null || true
 
+      # 4. 克隆源码 & 处理 Feeds
       - name: Clone ImmortalWrt Source
         run: |
           cd /home/runner/work/openwrt_build
@@ -84,17 +83,17 @@ jobs:
           cd openwrt
           ./scripts/feeds update -a
           
-          # 【去重】移除自带包 (保持你原有的逻辑)
+          # 【去重】移除自带包
           rm -rf feeds/luci/applications/luci-app-openclash feeds/packages/net/openclash
           rm -rf feeds/packages/net/{xray-core,v2ray-geodata,sing-box,chinadns-ng,dns2socks,hysteria,ipt2socks,microsocks,naiveproxy,shadowsocks-libev,shadowsocks-rust,shadowsocksr-libev,simple-obfs,tcping,trojan-plus,tuic-client,v2ray-plugin,xray-plugin,geoview,shadow-tls}
           rm -rf feeds/luci/applications/luci-app-passwall
           
           ./scripts/feeds install -a
 
+      # 5. 克隆插件 (保持你的逻辑)
       - name: 克隆自定义插件
         run: |
           cd /home/runner/work/openwrt_build/openwrt
-          # 使用你原有的 clone_repo 函数逻辑
           function clone_repo() {
             git clone --depth=1 -b "${3:-main}" "$1" "$2" || (sleep 5 && git clone --depth=1 -b "${3:-main}" "$1" "$2")
           }
@@ -104,24 +103,30 @@ jobs:
           clone_repo "https://github.com/vernesong/OpenClash.git" "package/luci-app-openclash" "master"
           clone_repo "https://github.com/sirpdboy/luci-app-lucky.git" "package/lucky"
           
-          # 替换 Golang (Passwall 依赖)
+          # 替换 Golang
           rm -rf feeds/packages/lang/golang
           git clone https://github.com/kenzok8/golang -b 1.25 feeds/packages/lang/golang
 
-      - name: 核心补丁：修复 Rust 404/Checksum & Python 依赖
+      # 6. 核心补丁：Rust & Python 修复
+      - name: Apply Fixes (Rust & Python)
         run: |
           cd /home/runner/work/openwrt_build/openwrt
           
-          # 1. 彻底解决 Rust 404 和 Checksum 错误 (核心补丁)
-          # 禁止从 CI 下载 LLVM，强制本地编译。这能避开你在本地遇到的 e3b0c442 (空文件) 校验错误
+          # 【Rust 修复 1】禁止从 CI 下载 LLVM，强制本地编译 (解决网络校验问题)
           find feeds/packages/lang/rust -name "Makefile" -exec sed -i 's/download-ci-llvm=true/download-ci-llvm=false/g' {} +
-          # 针对某些版本 rust 可能会读取 config.toml
           find feeds/packages/lang/rust -name "*.toml" -exec sed -i 's/download-ci-llvm = true/download-ci-llvm = false/g' {} + || true
           
-          # 2. 修复 Python setuptools 宿主依赖问题
+          # 【Rust 修复 2】增加 Curl 重试次数
+          echo "curl-retry = 5" >> ~/.curlrc
+          
+          # 【Python 修复】解决 setuptools 宿主依赖问题
           find feeds/packages -name Makefile -exec sed -i 's/python3-setuptools\/host/python3\/host/g' {} +
+          
+          # 【Libxcrypt 修复】防止旧版本编译器报错
+          sed -i '/^include \$(INCLUDE_DIR)\/package.mk/a TARGET_CFLAGS += -Wno-error=format-nonliteral' feeds/packages/libs/libxcrypt/Makefile || true
 
-      - name: 载入配置并预下载
+      # 7. 载入配置 & 下载
+      - name: Load Config & Download
         run: |
           cd /home/runner/work/openwrt_build/openwrt
           SELECTED_CONFIG="${{ github.event.inputs.config_file }}"
@@ -129,24 +134,36 @@ jobs:
           cp $GITHUB_WORKSPACE/$SELECTED_CONFIG .config
           
           make defconfig
-          # 清理可能存在的下载残留，强制重新开启干净下载
+          
+          # 清理下载缓存，确保 Rust 源码包是新鲜的
           rm -rf dl/rustc/*
           make download -j$(nproc)
 
-      - name: 编译 Host-Rust (解决本地死循环的关键步骤)
+      # 8. 编译 Host-Rust (最重要的一步)
+      - name: Compile Host-Rust (Single Thread)
         run: |
           cd /home/runner/work/openwrt_build/openwrt
-          # 采用单线程编译 Rust，防止多线程竞争导致 OOM Killed
-          # 这一步会执行你在本地成功的 "Building CXX object" 过程
+          
+          # 【关键修复】清理 Rust 构建目录
+          # 这直接修复了 "failed to calculate checksum ... Cargo.toml.orig" 错误
+          # 确保这一步是从干净的解压状态开始
+          rm -rf build_dir/target-*/host/rustc-*
+          rm -rf build_dir/host/rustc-*
+          
+          echo "Starting Rust compilation... This may take 1-2 hours."
+          # 使用单线程 (-j1) 编译，防止内存溢出
+          # V=s 开启详细日志
           make package/feeds/packages/rust/host/compile -j1 V=s
 
-      - name: 编译全量固件
+      # 9. 编译全量固件
+      - name: Compile Firmware
         run: |
           cd /home/runner/work/openwrt_build/openwrt
-          # Rust 编完后，其他部分可以开启全速编译
+          echo "Rust compiled successfully. Starting full build..."
           make -j$(nproc) || make -j1 V=s
 
-      - name: 整理固件并上传
+      # 10. 整理输出
+      - name: Organize Files
         if: always()
         run: |
           mkdir -p $GITHUB_WORKSPACE/firmware-out
@@ -154,12 +171,17 @@ jobs:
           cp -f *.bin $GITHUB_WORKSPACE/firmware-out/ || true
           cp -f /home/runner/work/openwrt_build/openwrt/.config $GITHUB_WORKSPACE/firmware-out/${{ env.MY_CONFIG_NAME }}
 
-      - name: 发布 Release
+      # 11. 上传 Release
+      - name: Upload Release
         uses: softprops/action-gh-release@v1
         if: success()
         with:
           tag_name: immortalwrt-$(date +'%Y%m%d-%H%M')
           name: "RAX3000M 固件 [${{ env.MY_CONFIG_NAME }}]"
+          body: |
+            编译时间: ${{ steps.date.outputs.date }}
+            源码: ImmortalWrt-24.10
+            Rust 修复: Applied (Local Build + Clean Vendor)
           files: ${{ github.workspace }}/firmware-out/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
