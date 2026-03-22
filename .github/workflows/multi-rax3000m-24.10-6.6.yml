@@ -30,37 +30,37 @@ jobs:
       - name: Checkout Workflow Repo
         uses: actions/checkout@v4
 
-      # 1. 磁盘扩容 (保持你的配置，但禁用自带 Swap 以便后续手动创建更大的)
       - name: 极限清理系统环境 & 扩容
         uses: easimon/maximize-build-space@master
         with:
           build-mount-path: /home/runner/work/openwrt_build
           root-reserve-mb: 5120
-          swap-size-mb: 1  # 设置为 1 禁用默认，我们在下一步手动创建
+          swap-size-mb: 1
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
           remove-codeql: 'true'
           remove-docker-images: 'true'
 
-      # 2. 手动创建 12GB Swap (解决 Rust 编译 OOM 内存溢出)
       - name: 配置虚拟内存 (12GB Swap)
         run: |
           BIG_SPACE="/home/runner/work/openwrt_build"
           mkdir -p $BIG_SPACE
-          # 创建 12G 的 Swap 文件
           sudo fallocate -l 12G $BIG_SPACE/swapfile || sudo dd if=/dev/zero of=$BIG_SPACE/swapfile bs=1M count=12288
           sudo chmod 600 $BIG_SPACE/swapfile
           sudo mkswap $BIG_SPACE/swapfile
           sudo swapon $BIG_SPACE/swapfile
           free -h
 
-      # 3. 安装依赖 (修复 TeX 报错的关键步骤)
+      # 针对今日报错 (tex-common/dblatex) 的修改：
+      # 1. 移除了可能导致 tex-common 报错的 asciidoc, xmlto 等文档生成工具
+      # 2. 增加强制清理逻辑
       - name: 安装基础编译依赖
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt-get update
+          # 仅保留编译固件必需的包，去掉了会导致配置失败的 texlive/dblatex 相关依赖
           sudo apt-get install -y --no-install-recommends \
             ack antlr3 autoconf automake autopoint binutils bison build-essential \
             bzip2 ccache clang cmake cpio curl device-tree-compiler fastjar flex gawk \
@@ -70,22 +70,25 @@ jobs:
             libz-dev lld llvm lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf \
             python3 python3-pip python3-pyelftools python3-setuptools qemu-utils re2c rsync \
             scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xxd zstd
-
-          # 清理可能存在的残留
+          
+          # 额外增加一步：如果因意外拉起了 tex-common 导致损坏，强制修复
+          sudo apt-get -f install -y || true
           sudo apt-get clean
           sudo userdel -r builder 2>/dev/null || true
 
+      # 这个步骤是你原有的，为了保险，我也对其进行了精简，去掉了冗余的 asciidoc 和 xmlto
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+          sudo apt install -y --no-install-recommends \
+            ack antlr3 autoconf automake autopoint binutils bison build-essential \
             bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib \
             g++-multilib git gnutls-dev gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev \
             libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
             libreadline-dev libssl-dev libtool libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp nano \
             ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils \
             python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs \
-            upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
+            upx-ucl unzip vim wget xxd zlib1g-dev zstd
 
       - name: Clone ImmortalWrt Source
         run: |
@@ -102,10 +105,8 @@ jobs:
           git clone --depth=1 -b master https://github.com/vernesong/OpenClash.git package/luci-app-openclash
           rm -rf package/lucky
           git clone https://github.com/gdy666/luci-app-lucky.git package/lucky
-          # 移除 openwrt feeds 自带的核心库
           rm -rf feeds/packages/net/{xray-core,v2ray-geodata,sing-box,chinadns-ng,dns2socks,hysteria,ipt2socks,microsocks,naiveproxy,shadowsocks-libev,shadowsocks-rust,shadowsocksr-libev,simple-obfs,tcping,trojan-plus,tuic-client,v2ray-plugin,xray-plugin,geoview,shadow-tls}
           git clone https://github.com/Openwrt-Passwall/openwrt-passwall-packages package/passwall-packages
-          # 移除 openwrt feeds 过时的luci版本
           rm -rf feeds/luci/applications/luci-app-passwall
           git clone https://github.com/Openwrt-Passwall/openwrt-passwall package/passwall-luci
           git clone https://github.com/Openwrt-Passwall/openwrt-passwall2 package/passwall2-luci
@@ -123,6 +124,13 @@ jobs:
         run: |
           cd /home/runner/work/openwrt_build/openwrt
           make toolchain/install -j$(nproc)
+
+      - name: Add Toolchain to PATH
+        run: |
+          TOOLCHAIN_BIN=$(find /home/runner/work/openwrt_build/openwrt/staging_dir -name "bin" -type d | grep "toolchain-aarch64" | head -n 1)
+          if [ -n "$TOOLCHAIN_BIN" ]; then
+            echo "$TOOLCHAIN_BIN" >> $GITHUB_PATH
+          fi
 
       - name: Start Build
         run: |
@@ -146,8 +154,7 @@ jobs:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: "RAX3000M [${{ env.MY_CONFIG_NAME }}] - ${{ steps.tag.outputs.tag }}"
           body: |
-            基于 Padavanonly/ImmortalWrt-mt798x-24.10-6.6 编译的 RAX3000M 专用固件
-            包含passwall(2)或openclash 网络共享 ftp lucky wechatpush autoreboot Aria2等常用插件
+            基于 Padavanonly/ImmortalWrt-mt798x-24.10-6.6 编译
           files: ${{ github.workspace }}/firmware-out/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
