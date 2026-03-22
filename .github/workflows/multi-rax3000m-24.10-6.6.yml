@@ -30,26 +30,50 @@ jobs:
       - name: Checkout Workflow Repo
         uses: actions/checkout@v4
 
-      - name: 清理磁盘空间并重新挂载大分区 (Maximize Build Space)
+      # 1. 磁盘扩容 (保持你的配置，但禁用自带 Swap 以便后续手动创建更大的)
+      - name: 极限清理系统环境 & 扩容
         uses: easimon/maximize-build-space@master
         with:
           build-mount-path: /home/runner/work/openwrt_build
           root-reserve-mb: 5120
-          swap-size-mb: 1
+          swap-size-mb: 1  # 设置为 1 禁用默认，我们在下一步手动创建
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
           remove-codeql: 'true'
           remove-docker-images: 'true'
 
-      - name: 配置虚拟内存 (Enable 4GB Swap)
+      # 2. 手动创建 12GB Swap (解决 Rust 编译 OOM 内存溢出)
+      - name: 配置虚拟内存 (12GB Swap)
         run: |
-          SWAP_DIR="/home/runner/work/openwrt_build"
-          sudo fallocate -l 4G $SWAP_DIR/swapfile || sudo dd if=/dev/zero of=$SWAP_DIR/swapfile bs=1M count=4096
-          sudo chmod 600 $SWAP_DIR/swapfile
-          sudo mkswap $SWAP_DIR/swapfile
-          sudo swapon $SWAP_DIR/swapfile
+          BIG_SPACE="/home/runner/work/openwrt_build"
+          mkdir -p $BIG_SPACE
+          # 创建 12G 的 Swap 文件
+          sudo fallocate -l 12G $BIG_SPACE/swapfile || sudo dd if=/dev/zero of=$BIG_SPACE/swapfile bs=1M count=12288
+          sudo chmod 600 $BIG_SPACE/swapfile
+          sudo mkswap $BIG_SPACE/swapfile
+          sudo swapon $BIG_SPACE/swapfile
           free -h
+
+      # 3. 安装依赖 (修复 TeX 报错的关键步骤)
+      - name: 安装基础编译依赖
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ack antlr3 autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache clang cmake cpio curl device-tree-compiler fastjar flex gawk \
+            gettext gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man intltool \
+            libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev \
+            libncurses-dev libpython3-dev libreadline-dev libssl-dev libtool libyaml-dev \
+            libz-dev lld llvm lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf \
+            python3 python3-pip python3-pyelftools python3-setuptools qemu-utils re2c rsync \
+            scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xxd zstd
+
+          # 清理可能存在的残留
+          sudo apt-get clean
+          sudo userdel -r builder 2>/dev/null || true
 
       - name: Install Dependencies
         run: |
