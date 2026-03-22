@@ -1,0 +1,129 @@
+name: Immortalwrt-24.10-6.6 插件选择版RAX3000M固件编译
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      config_file:
+        description: '请选择要使用的配置文件 (.config)'
+        required: true
+        default: '24.10-6.6-openclash-aria2.config'
+        type: choice
+        options:
+          - '24.10-6.6-passwall+openclash.config'
+          - '24.10-6.6-passwall2.config'
+          - '24.10-6.6-passwall&openclash.config'
+          - '24.10-6.6-passwall.config'
+          - '24.10-6.6-openclash.config'
+          - '24.10-6.6-openclash-aria2.config'
+          - '24.10-6.6-openclash-ksmbd.config'
+          - '24.10-6.6-openclash+passwall-ksmbd.config'
+          - '24.10-6.6-openclash+passwall2-ksmbd.config'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout Workflow Repo
+        uses: actions/checkout@v4
+
+      - name: 清理磁盘空间并重新挂载大分区 (Maximize Build Space)
+        uses: easimon/maximize-build-space@master
+        with:
+          build-mount-path: /home/runner/work/openwrt_build
+          root-reserve-mb: 5120
+          swap-size-mb: 1
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+
+      - name: 配置虚拟内存 (Enable 4GB Swap)
+        run: |
+          SWAP_DIR="/home/runner/work/openwrt_build"
+          sudo fallocate -l 4G $SWAP_DIR/swapfile || sudo dd if=/dev/zero of=$SWAP_DIR/swapfile bs=1M count=4096
+          sudo chmod 600 $SWAP_DIR/swapfile
+          sudo mkswap $SWAP_DIR/swapfile
+          sudo swapon $SWAP_DIR/swapfile
+          free -h
+
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib \
+            g++-multilib git gnutls-dev gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev \
+            libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
+            libreadline-dev libssl-dev libtool libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp nano \
+            ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils \
+            python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs \
+            upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
+
+      - name: Clone ImmortalWrt Source
+        run: |
+          cd /home/runner/work/openwrt_build
+          git clone -b openwrt-24.10-6.6 --single-branch --filter=blob:none https://github.com/padavanonly/immortalwrt-mt798x-24.10 openwrt
+          cd openwrt
+          ./scripts/feeds update -a
+          rm -rf feeds/luci/applications/luci-app-openclash
+          rm -rf feeds/packages/net/openclash
+          ./scripts/feeds install -a
+          rm -rf feeds/packages/lang/golang
+          git clone https://github.com/kenzok8/golang -b 1.25 feeds/packages/lang/golang
+          rm -rf package/luci-app-openclash
+          git clone --depth=1 -b master https://github.com/vernesong/OpenClash.git package/luci-app-openclash
+          rm -rf package/lucky
+          git clone https://github.com/gdy666/luci-app-lucky.git package/lucky
+          # 移除 openwrt feeds 自带的核心库
+          rm -rf feeds/packages/net/{xray-core,v2ray-geodata,sing-box,chinadns-ng,dns2socks,hysteria,ipt2socks,microsocks,naiveproxy,shadowsocks-libev,shadowsocks-rust,shadowsocksr-libev,simple-obfs,tcping,trojan-plus,tuic-client,v2ray-plugin,xray-plugin,geoview,shadow-tls}
+          git clone https://github.com/Openwrt-Passwall/openwrt-passwall-packages package/passwall-packages
+          # 移除 openwrt feeds 过时的luci版本
+          rm -rf feeds/luci/applications/luci-app-passwall
+          git clone https://github.com/Openwrt-Passwall/openwrt-passwall package/passwall-luci
+          git clone https://github.com/Openwrt-Passwall/openwrt-passwall2 package/passwall2-luci
+
+      - name: Apply Custom .config
+        run: |
+          SELECTED_CONFIG="${{ github.event.inputs.config_file || '24.10-6.6-openclash-aria2.config' }}"
+          echo "MY_CONFIG_NAME=$SELECTED_CONFIG" >> $GITHUB_ENV
+          cp $GITHUB_WORKSPACE/$SELECTED_CONFIG /home/runner/work/openwrt_build/openwrt/.config
+          cd /home/runner/work/openwrt_build/openwrt
+          make defconfig
+          make -j$(nproc) download
+
+      - name: Build Toolchain
+        run: |
+          cd /home/runner/work/openwrt_build/openwrt
+          make toolchain/install -j$(nproc)
+
+      - name: Start Build
+        run: |
+          cd /home/runner/work/openwrt_build/openwrt
+          make -j$(nproc) || make -j1 V=s
+
+      - name: Package Firmware
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/firmware-out
+          cd /home/runner/work/openwrt_build/openwrt/bin/targets/mediatek/filogic/
+          find . -maxdepth 1 -type f -exec cp {} $GITHUB_WORKSPACE/firmware-out/ \;
+          cp /home/runner/work/openwrt_build/openwrt/.config $GITHUB_WORKSPACE/firmware-out/${{ env.MY_CONFIG_NAME }}
+
+      - name: Generate Tag
+        id: tag
+        run: echo "tag=immortalwrt-$(date +'%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
+
+      - name: Upload Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: "RAX3000M [${{ env.MY_CONFIG_NAME }}] - ${{ steps.tag.outputs.tag }}"
+          body: |
+            基于 Padavanonly/ImmortalWrt-mt798x-24.10-6.6 编译的 RAX3000M 专用固件
+            包含passwall(2)或openclash 网络共享 ftp lucky wechatpush autoreboot Aria2等常用插件
+          files: ${{ github.workspace }}/firmware-out/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
